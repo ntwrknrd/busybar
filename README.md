@@ -1,1 +1,40 @@
-# busybar
+# BUSY Bar macOS system monitor
+
+Displays live CPU and memory utilization from macOS on a Flipper BUSY Bar.
+
+## Setup
+
+The monitor reads these environment variables:
+
+- `BUSYBAR_SERIAL_NUMBER`: required; prevents drawing to the wrong device.
+- `BUSYBAR_LAN_TOKEN`: password for the local Wi-Fi HTTP API.
+- `BUSYBAR_HOME_IP`: optional reserved home address.
+- `BUSYBAR_CLOUD_TOKEN`: optional BUSY Account API token.
+
+Install dependencies:
+
+```sh
+uv sync
+```
+
+Preview the generated display payload without contacting the device:
+
+```sh
+uv run busybar-monitor --dry-run
+```
+
+Draw once:
+
+```sh
+uv run busybar-monitor --once
+```
+
+Run continuously with a two-second refresh interval:
+
+```sh
+uv run busybar-monitor
+```
+
+The connection order is mDNS discovery, USB at `10.0.4.20`, the configured
+home LAN address, then BUSY Cloud. Every candidate must report the configured
+serial number before the monitor writes to it. Stop the monitor with `Ctrl-C`.
