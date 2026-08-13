@@ -14,6 +14,8 @@ from busylib import BusyBar, BusyBarDevices, types
 
 APP_NAME = "macos-system-monitor"
 USB_ADDRESS = "10.0.4.20"
+ANIMATION_FPS = 10
+ANIMATION_SECONDS = 0.5
 
 
 @dataclass(frozen=True)
@@ -90,9 +92,7 @@ def color_for(percent: float) -> str:
     return "#32D17CFF"
 
 
-def bar_elements(label: str, percent: float, y: int, prefix: str) -> list[types.DisplayElement]:
-    value = max(0.0, min(100.0, percent))
-    width = max(1, round(36 * value / 100))
+def static_bar_elements(label: str, y: int, prefix: str) -> list[types.DisplayElement]:
     return [
         types.TextElement(id=f"{prefix}-label", text=label, font="tiny", x=0, y=y),
         types.RectangleElement(
@@ -105,6 +105,13 @@ def bar_elements(label: str, percent: float, y: int, prefix: str) -> list[types.
             fill_colors=["#202838FF"],
             border_width=0,
         ),
+    ]
+
+
+def dynamic_bar_elements(percent: float, y: int, prefix: str) -> list[types.DisplayElement]:
+    value = max(0.0, min(100.0, percent))
+    width = max(1, round(36 * value / 100))
+    return [
         types.RectangleElement(
             id=f"{prefix}-value",
             x=17,
@@ -126,10 +133,25 @@ def bar_elements(label: str, percent: float, y: int, prefix: str) -> list[types.
     ]
 
 
-def frame(cpu: float, memory: float) -> types.DisplayElements:
-    elements = bar_elements("CPU", cpu, 1, "cpu")
-    elements.extend(bar_elements("RAM", memory, 9, "ram"))
+def static_frame() -> types.DisplayElements:
+    elements = static_bar_elements("CPU", 1, "cpu")
+    elements.extend(static_bar_elements("RAM", 9, "ram"))
     return types.DisplayElements(application_name=APP_NAME, priority=50, elements=elements)
+
+
+def dynamic_frame(cpu: float, memory: float) -> types.DisplayElements:
+    elements = dynamic_bar_elements(cpu, 1, "cpu")
+    elements.extend(dynamic_bar_elements(memory, 9, "ram"))
+    return types.DisplayElements(application_name=APP_NAME, priority=50, elements=elements)
+
+
+def frame(cpu: float, memory: float) -> types.DisplayElements:
+    elements = static_frame().elements + dynamic_frame(cpu, memory).elements
+    return types.DisplayElements(application_name=APP_NAME, priority=50, elements=elements)
+
+
+def interpolate(start: float, end: float, progress: float) -> float:
+    return start + (end - start) * progress
 
 
 def parser() -> argparse.ArgumentParser:
@@ -169,12 +191,27 @@ def main() -> None:
     signal.signal(signal.SIGINT, stop)
     signal.signal(signal.SIGTERM, stop)
 
+    cpu = psutil.cpu_percent(interval=None)
+    memory = psutil.virtual_memory().percent
+
     try:
-        while not stopping:
-            payload = frame(psutil.cpu_percent(interval=None), psutil.virtual_memory().percent)
-            bar.display_draw(payload, clear_before_draw=True)
-            if args.once:
-                break
+        bar.display_draw(frame(cpu, memory), clear_before_draw=True)
+        while not stopping and not args.once:
             time.sleep(args.interval)
+            target_cpu = psutil.cpu_percent(interval=None)
+            target_memory = psutil.virtual_memory().percent
+            steps = max(1, round(ANIMATION_FPS * min(ANIMATION_SECONDS, args.interval)))
+            for step in range(1, steps + 1):
+                if stopping:
+                    break
+                progress = step / steps
+                bar.display_draw(
+                    dynamic_frame(
+                        interpolate(cpu, target_cpu, progress),
+                        interpolate(memory, target_memory, progress),
+                    )
+                )
+                time.sleep(1 / ANIMATION_FPS)
+            cpu, memory = target_cpu, target_memory
     finally:
         bar.close()

@@ -1,6 +1,7 @@
 # BUSY Bar macOS system monitor
 
 Displays live CPU and memory utilization from macOS on a Flipper BUSY Bar.
+Values animate smoothly in place without clearing the display between samples.
 
 ## Setup
 
