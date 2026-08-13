@@ -13,6 +13,7 @@ from busybar.stocks import (
     animation_pages,
     load_cache,
     parse_chart,
+    parser,
     refresh_series,
     save_cache,
 )
@@ -39,6 +40,12 @@ def yahoo_payload() -> dict:
 
 
 class StockTests(unittest.TestCase):
+    def test_change_display_defaults_to_percent(self) -> None:
+        self.assertEqual(parser().parse_args([]).change, "percent")
+
+    def test_change_display_accepts_points(self) -> None:
+        self.assertEqual(parser().parse_args(["--change", "points"]).change, "points")
+
     def test_defaults_match_apple_stocks_watchlist(self) -> None:
         self.assertEqual(
             DEFAULT_SYMBOLS,
@@ -83,6 +90,7 @@ class StockTests(unittest.TestCase):
         self.assertEqual(series.timestamps, [1, 3, 4])
         self.assertEqual(series.closes, [100.0, 101.0, 102.0])
         self.assertEqual(series.change_percent, 2.0)
+        self.assertEqual(series.change_points, 2.0)
 
     @patch("busybar.stocks.time.time", return_value=100)
     def test_builds_animation_pages_from_cached_market_data(
@@ -92,8 +100,19 @@ class StockTests(unittest.TestCase):
         page = animation_pages({"AAPL": series}, ["AAPL"], stale_after=30)[0]
         self.assertEqual(page.symbol, "AAPL")
         self.assertEqual(page.change_percent, 2)
+        self.assertEqual(page.change_points, 2)
+        self.assertEqual(page.change_mode, "percent")
         self.assertEqual(page.closes, [100, 100, 102])
         self.assertFalse(page.stale)
+
+    @patch("busybar.stocks.time.time", return_value=100)
+    def test_builds_points_animation_pages(self, _time: object) -> None:
+        series = MarketSeries("AAPL", "USD", 102, 100, [1, 2], [100, 102], 100)
+        page = animation_pages(
+            {"AAPL": series}, ["AAPL"], stale_after=30, change_mode="points"
+        )[0]
+        self.assertEqual(page.change_points, 2)
+        self.assertEqual(page.change_mode, "points")
 
     def test_cache_round_trip(self) -> None:
         series = MarketSeries("AAPL", "USD", 102, 100, [1, 2], [100, 102], 123)

@@ -59,7 +59,7 @@ FONT: dict[str, tuple[str, ...]] = {
     "+": ("000", "010", "111", "010", "000"),
     "-": ("000", "000", "111", "000", "000"),
     ".": ("000", "000", "000", "000", "010"),
-    "%": ("101", "001", "010", "100", "101"),
+    "%": ("110", "110", "010", "011", "011"),
     "^": ("010", "101", "000", "000", "000"),
     "?": ("110", "001", "010", "000", "010"),
 }
@@ -71,6 +71,8 @@ class StockPage:
     change_percent: float
     closes: list[float]
     stale: bool = False
+    change_points: float = 0
+    change_mode: str = "percent"
 
 
 @dataclass(frozen=True)
@@ -112,12 +114,23 @@ def _draw_text(
         cursor += 4
 
 
-def _display_change(change_percent: float) -> float:
-    return 0 if abs(change_percent) < 0.05 else change_percent
+def _display_change(change: float, mode: str) -> float:
+    threshold = 0.005 if mode == "points" else 0.05
+    return 0 if abs(change) < threshold else change
 
 
-def format_change(change_percent: float) -> str:
-    displayed = _display_change(change_percent)
+def format_change(change: float, mode: str = "percent") -> str:
+    displayed = _display_change(change, mode)
+    if mode == "points":
+        if displayed == 0:
+            return "0.00"
+        if abs(displayed) >= 1000:
+            return f"{displayed / 1000:+.1f}K"
+        if abs(displayed) >= 100:
+            return f"{displayed:+.0f}"
+        if abs(displayed) >= 10:
+            return f"{displayed:+.1f}"
+        return f"{displayed:+.2f}"
     if displayed == 0:
         return "0.0%"
     if abs(displayed) >= 10:
@@ -180,7 +193,8 @@ def _draw_line(
 def render_page(page: StockPage, reveal: float = 1) -> bytes:
     frame = bytearray(WIDTH * HEIGHT * 3)
     _fill_rect(frame, CHART_X, 0, CHART_WIDTH, HEIGHT, CHART_BACKGROUND)
-    displayed_change = _display_change(page.change_percent)
+    change = page.change_points if page.change_mode == "points" else page.change_percent
+    displayed_change = _display_change(change, page.change_mode)
     color = (
         STALE
         if page.stale
@@ -191,7 +205,7 @@ def render_page(page: StockPage, reveal: float = 1) -> bytes:
         else RED
     )
     _draw_text(frame, page.symbol[:5], 0, 0, WHITE)
-    _draw_text(frame, format_change(page.change_percent), 0, 9, color)
+    _draw_text(frame, format_change(change, page.change_mode), 0, 9, color)
     points = _graph_points(page.closes)
     visible = round(max(0, min(1, reveal)) * max(0, len(points) - 1))
     for index in range(visible):

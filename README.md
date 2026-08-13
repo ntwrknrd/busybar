@@ -3,7 +3,7 @@
 The `busybar` CLI runs separate applications on a Flipper BUSY Bar:
 
 - `busybar system` displays live CPU, memory, CPU temperature, and ping latency.
-- `busybar stocks` rotates through intraday percentage changes and charts.
+- `busybar stocks` rotates through intraday changes and charts.
 
 The system application's two dashboard pages rotate every five seconds with a
 horizontal slide transition.
@@ -39,12 +39,12 @@ brew install macmon
 
 Ping targets `1.1.1.1` by default. Override it with `BUSYBAR_PING_TARGET`.
 
-The stock application defaults to `AAPL`, `MSFT`, and `NVDA`. Set a persistent
-default with a space-separated `BUSYBAR_STOCK_SYMBOLS` value or pass symbols on
-the command line. It uses Yahoo Finance's unofficial chart endpoint without an
-account or API key. Quotes refresh once per minute and are cached under
-`~/Library/Caches/busybar/`, so temporary throttling or outages retain the last
-successful chart.
+The stock application defaults to the symbols in the Apple Stocks watchlist
+used when it was created. Set a persistent default with a space-separated
+`BUSYBAR_STOCK_SYMBOLS` value or pass symbols on the command line. It uses Yahoo
+Finance's unofficial chart endpoint without an account or API key. Quotes
+refresh once per minute and are cached under `~/Library/Caches/busybar/`, so
+temporary throttling or outages retain the last successful chart.
 
 Preview the generated display payload without contacting the device:
 
@@ -68,11 +68,13 @@ uv run busybar stocks AAPL MSFT NVDA
 ```
 
 Stock symbols rotate every ten seconds. Override the display and market-data
-cadence with `--rotate` and `--refresh`. The CLI renders every stock page into a
-cached, continuously looping animation asset. The BUSY Bar plays the 24 FPS
-vertical page swipes and chart reveals locally, without clearing the display or
-making an HTTP request for each frame. Quote refreshes rebuild the inactive
-asset slot before switching to it at a cycle boundary. Failed Yahoo
+cadence with `--rotate` and `--refresh`. Percentage change is shown by default;
+use `--change points` to show the absolute price change instead. The CLI renders
+every stock page into a cached, continuously looping animation asset. The BUSY
+Bar plays the 24 FPS vertical page swipes and chart reveals locally, without
+clearing the display or making an HTTP request for each frame. Quote refreshes
+rebuild the inactive asset slot before switching to it at a cycle boundary.
+Failed Yahoo
 refreshes retain the previous asset, use exponential backoff, and mark data
 older than three refresh intervals in yellow.
 

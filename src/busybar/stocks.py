@@ -87,6 +87,10 @@ class MarketSeries:
             return 0
         return (self.price - self.previous_close) / self.previous_close * 100
 
+    @property
+    def change_points(self) -> float:
+        return self.price - self.previous_close
+
 
 def cache_path() -> Path:
     root = os.getenv("XDG_CACHE_HOME")
@@ -172,13 +176,18 @@ def refresh_series(
 
 
 def animation_pages(
-    market: dict[str, MarketSeries], symbols: list[str], stale_after: float
+    market: dict[str, MarketSeries],
+    symbols: list[str],
+    stale_after: float,
+    change_mode: str = "percent",
 ) -> list[StockPage]:
     now = time.time()
     return [
         StockPage(
             symbol=market[symbol].symbol,
             change_percent=market[symbol].change_percent,
+            change_points=market[symbol].change_points,
+            change_mode=change_mode,
             closes=[market[symbol].previous_close, *market[symbol].closes],
             stale=now - market[symbol].fetched_at > stale_after,
         )
@@ -221,6 +230,12 @@ def parser() -> argparse.ArgumentParser:
         default=DEFAULT_REFRESH_SECONDS,
         help="quote refresh seconds",
     )
+    result.add_argument(
+        "--change",
+        choices=("percent", "points"),
+        default="percent",
+        help="change value to display (default: percent)",
+    )
     result.add_argument("--once", action="store_true", help="draw one symbol and exit")
     result.add_argument(
         "--dry-run", action="store_true", help="print one frame as JSON"
@@ -261,7 +276,7 @@ def main(argv: list[str] | None = None) -> None:
 
     stale_after = args.refresh * 3
     animation = build_stock_animation(
-        animation_pages(market, available, stale_after), args.rotate
+        animation_pages(market, available, stale_after, args.change), args.rotate
     )
     asset_slot = 0
     asset_filename = ASSET_FILENAMES[asset_slot]
@@ -392,7 +407,12 @@ def main(argv: list[str] | None = None) -> None:
                         symbol for symbol in symbols if symbol in refreshed
                     ]
                     refreshed_animation = build_stock_animation(
-                        animation_pages(refreshed, refreshed_available, stale_after),
+                        animation_pages(
+                            refreshed,
+                            refreshed_available,
+                            stale_after,
+                            args.change,
+                        ),
                         args.rotate,
                     )
                     refreshed_slot = 1 - asset_slot

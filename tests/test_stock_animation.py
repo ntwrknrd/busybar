@@ -45,8 +45,29 @@ class StockAnimationTests(unittest.TestCase):
         self.assertEqual(format_change(-0.0072), "0.0%")
         self.assertEqual(format_change(0.0072), "0.0%")
 
+    def test_point_change_format_fits_left_column(self) -> None:
+        self.assertEqual(format_change(-0.03, "points"), "-0.03")
+        self.assertEqual(format_change(12.34, "points"), "+12.3")
+        self.assertEqual(format_change(123.4, "points"), "+123")
+        self.assertEqual(format_change(1200, "points"), "+1.2K")
+        self.assertEqual(format_change(-0.004, "points"), "0.00")
+
     def test_effectively_flat_change_uses_neutral_color(self) -> None:
         frame = render_page(StockPage("AVGO", -0.0072, [416.08, 421.67, 416.05]))
+        pixels = {frame[offset : offset + 3] for offset in range(0, len(frame), 3)}
+        self.assertNotIn(bytes((255, 89, 100)), pixels)
+        self.assertNotIn(bytes((50, 209, 124)), pixels)
+
+    def test_effectively_flat_point_change_uses_neutral_color(self) -> None:
+        frame = render_page(
+            StockPage(
+                "AVGO",
+                -0.0072,
+                [416.08, 421.67, 416.05],
+                change_points=-0.004,
+                change_mode="points",
+            )
+        )
         pixels = {frame[offset : offset + 3] for offset in range(0, len(frame), 3)}
         self.assertNotIn(bytes((255, 89, 100)), pixels)
         self.assertNotIn(bytes((50, 209, 124)), pixels)
