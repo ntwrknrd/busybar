@@ -10,7 +10,6 @@ import re
 import shutil
 import signal
 import subprocess
-import sys
 import time
 from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass
@@ -29,6 +28,7 @@ from busybar.device import (
     resolve,
     same_route,
 )
+from busybar.output import status
 
 APP_NAME = "macos-system-monitor"
 ANIMATION_FPS = 12
@@ -367,18 +367,18 @@ def main(argv: list[str] | None = None) -> None:
                     candidate = None
                     delay = reconnect_delay(reconnect_attempt)
                     reconnect_attempt += 1
-                    print(
+                    status(
                         f"BUSY Bar unavailable ({exc}); retrying in {delay}s",
-                        file=sys.stderr,
+                        timestamp=args.verbose,
                     )
                     stop_event.wait(delay)
                     continue
 
-                print(f"Connected via {candidate.name}", file=sys.stderr)
+                status(f"Connected via {candidate.name}", timestamp=args.verbose)
                 if display_suppressed:
-                    print(
+                    status(
                         "Display is owned by a higher-priority mode; waiting",
-                        file=sys.stderr,
+                        timestamp=args.verbose,
                     )
                 reconnect_attempt = 0
                 next_better_connection_poll = (
@@ -398,14 +398,14 @@ def main(argv: list[str] | None = None) -> None:
                         probe_bar, probe_candidate = probe_future.result()
                     except RuntimeError as exc:
                         if args.verbose:
-                            print(f"Transport check failed: {exc}", file=sys.stderr)
+                            status(f"Transport check failed: {exc}", timestamp=True)
                     else:
                         if same_route(probe_candidate, candidate):
                             probe_bar.close()
                             if args.verbose:
-                                print(
+                                status(
                                     f"Connection healthy via {candidate.name}",
-                                    file=sys.stderr,
+                                    timestamp=True,
                                 )
                         elif is_better(probe_candidate, candidate):
                             old_bar = bar
@@ -426,7 +426,10 @@ def main(argv: list[str] | None = None) -> None:
                                 if not display_is_busy(exc):
                                     raise
                                 display_suppressed = True
-                            print(f"Switched to {candidate.name}", file=sys.stderr)
+                            status(
+                                f"Switched to {candidate.name}",
+                                timestamp=args.verbose,
+                            )
                         else:
                             probe_bar.close()
                     probe_future = None
@@ -436,7 +439,7 @@ def main(argv: list[str] | None = None) -> None:
                     and time.monotonic() >= next_better_connection_poll
                 ):
                     if args.verbose:
-                        print("Checking for a better connection", file=sys.stderr)
+                        status("Checking for a better connection", timestamp=True)
                     probe_future = probe_executor.submit(resolve)
                     next_better_connection_poll = (
                         time.monotonic() + BETTER_CONNECTION_POLL_SECONDS
@@ -484,15 +487,18 @@ def main(argv: list[str] | None = None) -> None:
                         if not display_is_busy(exc):
                             raise
                         if not display_suppressed:
-                            print(
+                            status(
                                 "Display is owned by a higher-priority mode; waiting",
-                                file=sys.stderr,
+                                timestamp=args.verbose,
                             )
                         display_suppressed = True
                         break
                     else:
                         if display_suppressed:
-                            print("Display available; monitor resumed", file=sys.stderr)
+                            status(
+                                "Display available; monitor resumed",
+                                timestamp=args.verbose,
+                            )
                         display_suppressed = False
                     frame_deadline = animation_started + step / ANIMATION_FPS
                     if stop_event.wait(max(0, frame_deadline - time.monotonic())):
@@ -504,9 +510,9 @@ def main(argv: list[str] | None = None) -> None:
                     if page == 1 and sensor_future is None:
                         sensor_future = sensor_executor.submit(sample_secondary_metrics)
             except Exception as exc:
-                print(
+                status(
                     f"Lost {candidate.name} connection ({type(exc).__name__}); reconnecting",
-                    file=sys.stderr,
+                    timestamp=args.verbose,
                 )
                 bar.close()
                 bar = None

@@ -28,6 +28,7 @@ from busybar.device import (
     resolve,
     same_route,
 )
+from busybar.output import status
 from busybar.stock_animation import StockPage, build_stock_animation
 
 APP_NAME = "stocks"
@@ -219,9 +220,9 @@ def main(argv: list[str] | None = None) -> None:
     if not available:
         parser().error(f"no market data available ({'; '.join(failures)})")
     if failures:
-        print(
+        status(
             f"Yahoo refresh incomplete ({'; '.join(failures)}); using cache",
-            file=sys.stderr,
+            timestamp=args.verbose,
         )
 
     stale_after = args.refresh * 3
@@ -277,14 +278,14 @@ def main(argv: list[str] | None = None) -> None:
             if not display_is_busy(exc):
                 raise
             if not display_suppressed:
-                print(
+                status(
                     "Display is owned by a higher-priority mode; waiting",
-                    file=sys.stderr,
+                    timestamp=args.verbose,
                 )
             display_suppressed = True
             return False
         if display_suppressed:
-            print("Display available; stocks resumed", file=sys.stderr)
+            status("Display available; stocks resumed", timestamp=args.verbose)
         display_suppressed = False
         return True
 
@@ -299,9 +300,9 @@ def main(argv: list[str] | None = None) -> None:
     def disconnect(exc: Exception) -> None:
         nonlocal bar, candidate, display_suppressed
         route = candidate.name if candidate is not None else "BUSY Bar"
-        print(
+        status(
             f"Lost {route} connection ({type(exc).__name__}); reconnecting",
-            file=sys.stderr,
+            timestamp=args.verbose,
         )
         if bar is not None:
             bar.close()
@@ -324,13 +325,13 @@ def main(argv: list[str] | None = None) -> None:
                     candidate = None
                     delay = reconnect_delay(reconnect_attempt)
                     reconnect_attempt += 1
-                    print(
+                    status(
                         f"BUSY Bar unavailable ({exc}); retrying in {delay}s",
-                        file=sys.stderr,
+                        timestamp=args.verbose,
                     )
                     stop_event.wait(delay)
                     continue
-                print(f"Connected via {candidate.name}", file=sys.stderr)
+                status(f"Connected via {candidate.name}", timestamp=args.verbose)
                 reconnect_attempt = 0
                 next_probe = time.monotonic() + BETTER_CONNECTION_POLL_SECONDS
                 try:
@@ -363,9 +364,9 @@ def main(argv: list[str] | None = None) -> None:
                             refreshed_animation.data,
                         )
                     except Exception as exc:
-                        print(
+                        status(
                             f"Animation asset refresh failed ({type(exc).__name__}); keeping previous data",
-                            file=sys.stderr,
+                            timestamp=args.verbose,
                         )
                         next_refresh = time.monotonic() + args.refresh
                     else:
@@ -395,22 +396,22 @@ def main(argv: list[str] | None = None) -> None:
                         refresh_failures += 1
                         delay = min(300, args.refresh * (2 ** min(refresh_failures, 3)))
                         next_refresh = time.monotonic() + delay
-                        print(
+                        status(
                             f"Yahoo refresh failed ({'; '.join(refresh_errors)}); retrying in {delay:.0f}s",
-                            file=sys.stderr,
+                            timestamp=args.verbose,
                         )
                     else:
                         refresh_failures = 0
                         next_refresh = time.monotonic() + args.refresh
                         if args.verbose:
-                            print("Yahoo quotes refreshed", file=sys.stderr)
+                            status("Yahoo quotes refreshed", timestamp=True)
 
                 if probe_future is not None and probe_future.done():
                     try:
                         probe_bar, probe_candidate = probe_future.result()
                     except RuntimeError as exc:
                         if args.verbose:
-                            print(f"Transport check failed: {exc}", file=sys.stderr)
+                            status(f"Transport check failed: {exc}", timestamp=True)
                     else:
                         if same_route(probe_candidate, candidate):
                             probe_bar.close()
@@ -430,7 +431,10 @@ def main(argv: list[str] | None = None) -> None:
                             except Exception as exc:
                                 disconnect(exc)
                                 break
-                            print(f"Switched to {candidate.name}", file=sys.stderr)
+                            status(
+                                f"Switched to {candidate.name}",
+                                timestamp=args.verbose,
+                            )
                         else:
                             probe_bar.close()
                     probe_future = None
@@ -455,7 +459,7 @@ def main(argv: list[str] | None = None) -> None:
             target = (index + 1) % len(available)
             try:
                 if args.verbose:
-                    print(f"Showing {available[target]}", file=sys.stderr)
+                    status(f"Showing {available[target]}", timestamp=True)
                 play(f"to_{target}")
             except Exception as exc:
                 disconnect(exc)
