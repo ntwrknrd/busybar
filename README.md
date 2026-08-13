@@ -4,6 +4,7 @@ The `busybar` CLI runs separate applications on a Flipper BUSY Bar:
 
 - `busybar system` displays live CPU, memory, CPU temperature, and ping latency.
 - `busybar stocks` rotates through intraday changes and charts.
+- `busybar weather` displays current conditions and short-range forecasts.
 
 The system application keeps CPU, memory, CPU temperature, and ping latency
 visible together in a stable four-cell overview. Each cell includes a compact
@@ -43,6 +44,12 @@ brew install macmon
 
 Ping targets `1.1.1.1` by default. Override it with `BUSYBAR_PING_TARGET`.
 
+Weather defaults to Indianapolis, Indiana and Fahrenheit. Pass a city or postal
+code, or set `BUSYBAR_WEATHER_LOCATION`, to change the location. Set
+`BUSYBAR_WEATHER_UNITS` to `celsius` for metric temperatures. Weather data comes
+from Open-Meteo without an account or API key and is cached under
+`~/Library/Caches/busybar/` for temporary outages.
+
 The stock application defaults to the symbols in the Apple Stocks watchlist
 used when it was created. Set a persistent default with a space-separated
 `BUSYBAR_STOCK_SYMBOLS` value or pass symbols on the command line. It uses Yahoo
@@ -55,6 +62,7 @@ Preview the generated display payload without contacting the device:
 ```sh
 uv run busybar system --dry-run
 uv run busybar stocks AAPL MSFT --dry-run
+uv run busybar weather "Indianapolis, Indiana" --dry-run
 ```
 
 Draw once:
@@ -62,6 +70,7 @@ Draw once:
 ```sh
 uv run busybar system --once
 uv run busybar stocks AAPL --once
+uv run busybar weather --once
 ```
 
 Run continuously with a two-second refresh interval:
@@ -69,7 +78,15 @@ Run continuously with a two-second refresh interval:
 ```sh
 uv run busybar system
 uv run busybar stocks AAPL MSFT NVDA
+uv run busybar weather "Indianapolis, Indiana"
 ```
+
+Weather rotates through current conditions, a 12-hour temperature and
+precipitation graph, and a three-day forecast. The BUSY Bar plays the vertical
+page transitions locally at 24 FPS. Forecasts refresh every 15 minutes by
+default; override that with `--refresh` and the page duration with `--dwell`.
+Updated forecasts are uploaded to an inactive asset slot and activated at a
+cycle boundary. Failed refreshes retain the cached forecast.
 
 Stock symbols rotate every ten seconds. Override the display and market-data
 cadence with `--rotate` and `--refresh`. Percentage change is shown by default;

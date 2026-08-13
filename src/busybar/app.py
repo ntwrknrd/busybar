@@ -3,16 +3,16 @@ from __future__ import annotations
 import argparse
 import sys
 
-from busybar import stocks, system
+from busybar import stocks, system, weather
 
 
 def parser() -> argparse.ArgumentParser:
     result = argparse.ArgumentParser(
         prog="busybar",
         description="BUSY Bar applications",
-        epilog="modes: system, stocks",
+        epilog="modes: system, stocks, weather",
     )
-    result.add_argument("mode", choices=("system", "stocks"))
+    result.add_argument("mode", choices=("system", "stocks", "weather"))
     return result
 
 
@@ -26,5 +26,7 @@ def main(argv: list[str] | None = None) -> None:
         system.main(arguments)
     elif mode == "stocks":
         stocks.main(arguments)
+    elif mode == "weather":
+        weather.main(arguments)
     else:
         parser().error(f"invalid mode: {mode}")
