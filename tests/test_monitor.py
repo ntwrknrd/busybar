@@ -18,6 +18,7 @@ from busybar_monitor.cli import (
     SecondaryMetrics,
     secondary_frame,
     static_frame,
+    smoothstep,
     temperature_color,
     ping_color,
     transition_frame,
@@ -94,6 +95,11 @@ class MonitorTests(unittest.TestCase):
         self.assertEqual(interpolate(20, 80, 0), 20)
         self.assertEqual(interpolate(20, 80, 0.5), 50)
         self.assertEqual(interpolate(20, 80, 1), 80)
+
+    def test_smoothstep_easing(self) -> None:
+        self.assertEqual(smoothstep(-1), 0)
+        self.assertEqual(smoothstep(0.5), 0.5)
+        self.assertEqual(smoothstep(2), 1)
 
     def test_elements_can_expire_after_a_crash(self) -> None:
         payload = frame(20, 40, timeout=7)

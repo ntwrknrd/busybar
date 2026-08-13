@@ -22,8 +22,8 @@ from busylib import BusyBar, BusyBarDevices, exceptions, types
 
 APP_NAME = "macos-system-monitor"
 USB_ADDRESS = "10.0.4.20"
-ANIMATION_FPS = 10
-ANIMATION_SECONDS = 0.5
+ANIMATION_FPS = 12
+ANIMATION_SECONDS = 0.75
 BETTER_CONNECTION_POLL_SECONDS = 30
 RECONNECT_DELAYS = (1, 2, 5, 10, 30)
 PAGE_SECONDS = 5
@@ -341,6 +341,11 @@ def interpolate(start: float, end: float, progress: float) -> float:
     return start + (end - start) * progress
 
 
+def smoothstep(progress: float) -> float:
+    value = max(0.0, min(1.0, progress))
+    return value * value * (3 - 2 * value)
+
+
 def reconnect_delay(attempt: int) -> int:
     return RECONNECT_DELAYS[min(attempt, len(RECONNECT_DELAYS) - 1)]
 
@@ -510,10 +515,16 @@ def main() -> None:
                 steps = max(
                     1, round(ANIMATION_FPS * min(ANIMATION_SECONDS, args.interval))
                 )
+                animation_started = time.monotonic()
                 for step in range(1, steps + 1):
                     if stop_event.is_set():
                         break
-                    progress = step / steps
+                    linear_progress = step / steps
+                    progress = (
+                        smoothstep(linear_progress)
+                        if switching_page
+                        else linear_progress
+                    )
                     try:
                         payload = (
                             transition_frame(
@@ -548,7 +559,8 @@ def main() -> None:
                         if display_suppressed:
                             print("Display available; monitor resumed", file=sys.stderr)
                         display_suppressed = False
-                    if stop_event.wait(1 / ANIMATION_FPS):
+                    frame_deadline = animation_started + step / ANIMATION_FPS
+                    if stop_event.wait(max(0, frame_deadline - time.monotonic())):
                         break
                 cpu, memory = target_cpu, target_memory
                 if switching_page:

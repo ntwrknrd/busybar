@@ -3,6 +3,8 @@
 Displays live CPU, memory, CPU temperature, and ping latency from macOS on a
 Flipper BUSY Bar. The two dashboard pages rotate every five seconds with a
 horizontal slide transition.
+Transitions use latency-aware frame pacing and eased motion to remain smooth
+over Wi-Fi without delaying each frame by the API round-trip time.
 Values animate smoothly in place without clearing the display between samples.
 Every update sends a complete frame, so the monitor can redraw itself after the
 physical mode selector temporarily gives the display to another application.
