@@ -112,10 +112,17 @@ def _draw_text(
         cursor += 4
 
 
+def _display_change(change_percent: float) -> float:
+    return 0 if abs(change_percent) < 0.05 else change_percent
+
+
 def format_change(change_percent: float) -> str:
-    if abs(change_percent) >= 10:
-        return f"{change_percent:+.0f}%"
-    return f"{change_percent:+.1f}%"
+    displayed = _display_change(change_percent)
+    if displayed == 0:
+        return "0.0%"
+    if abs(displayed) >= 10:
+        return f"{displayed:+.0f}%"
+    return f"{displayed:+.1f}%"
 
 
 def _sample(values: list[float], count: int = 26) -> list[float]:
@@ -173,7 +180,16 @@ def _draw_line(
 def render_page(page: StockPage, reveal: float = 1) -> bytes:
     frame = bytearray(WIDTH * HEIGHT * 3)
     _fill_rect(frame, CHART_X, 0, CHART_WIDTH, HEIGHT, CHART_BACKGROUND)
-    color = STALE if page.stale else (GREEN if page.change_percent >= 0 else RED)
+    displayed_change = _display_change(page.change_percent)
+    color = (
+        STALE
+        if page.stale
+        else WHITE
+        if displayed_change == 0
+        else GREEN
+        if displayed_change > 0
+        else RED
+    )
     _draw_text(frame, page.symbol[:5], 0, 0, WHITE)
     _draw_text(frame, format_change(page.change_percent), 0, 9, color)
     points = _graph_points(page.closes)

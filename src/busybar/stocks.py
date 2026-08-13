@@ -179,7 +179,7 @@ def animation_pages(
         StockPage(
             symbol=market[symbol].symbol,
             change_percent=market[symbol].change_percent,
-            closes=market[symbol].closes,
+            closes=[market[symbol].previous_close, *market[symbol].closes],
             stale=now - market[symbol].fetched_at > stale_after,
         )
         for symbol in symbols

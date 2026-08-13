@@ -92,7 +92,7 @@ class StockTests(unittest.TestCase):
         page = animation_pages({"AAPL": series}, ["AAPL"], stale_after=30)[0]
         self.assertEqual(page.symbol, "AAPL")
         self.assertEqual(page.change_percent, 2)
-        self.assertEqual(page.closes, [100, 102])
+        self.assertEqual(page.closes, [100, 100, 102])
         self.assertFalse(page.stale)
 
     def test_cache_round_trip(self) -> None:
