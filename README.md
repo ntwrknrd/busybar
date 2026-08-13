@@ -1,6 +1,8 @@
 # BUSY Bar macOS system monitor
 
-Displays live CPU and memory utilization from macOS on a Flipper BUSY Bar.
+Displays live CPU, memory, CPU temperature, and ping latency from macOS on a
+Flipper BUSY Bar. The two dashboard pages rotate every five seconds with a
+horizontal slide transition.
 Values animate smoothly in place without clearing the display between samples.
 Every update sends a complete frame, so the monitor can redraw itself after the
 physical mode selector temporarily gives the display to another application.
@@ -22,6 +24,14 @@ Install dependencies:
 ```sh
 uv sync
 ```
+
+CPU temperature requires `macmon` on Apple Silicon:
+
+```sh
+brew install macmon
+```
+
+Ping targets `1.1.1.1` by default. Override it with `BUSYBAR_PING_TARGET`.
 
 Preview the generated display payload without contacting the device:
 

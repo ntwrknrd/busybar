@@ -15,7 +15,12 @@ from busybar_monitor.cli import (
     is_better,
     reconnect_delay,
     same_route,
+    SecondaryMetrics,
+    secondary_frame,
     static_frame,
+    temperature_color,
+    ping_color,
+    transition_frame,
 )
 
 
@@ -109,6 +114,20 @@ class MonitorTests(unittest.TestCase):
                 "ram-percent",
             },
         )
+
+    def test_secondary_page_formats_temperature_and_ping(self) -> None:
+        payload = secondary_frame(SecondaryMetrics(67.4, 12.2))
+        values = {element.id: getattr(element, "text", None) for element in payload.elements}
+        self.assertEqual(values["temp-percent"], "67C")
+        self.assertEqual(values["ping-percent"], "12ms")
+        self.assertEqual(temperature_color(70), "#FFD43BFF")
+        self.assertEqual(ping_color(81), "#FF3030FF")
+
+    def test_transition_contains_both_pages(self) -> None:
+        payload = transition_frame(0, 0.5, 20, 40, SecondaryMetrics(60, 10), 10)
+        ids = {element.id for element in payload.elements}
+        self.assertIn("cpu-label", ids)
+        self.assertIn("temp-label", ids)
 
 
 if __name__ == "__main__":
