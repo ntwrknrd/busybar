@@ -233,7 +233,10 @@ def main(argv: list[str] | None = None) -> None:
     )
     asset_slot = 0
     asset_filename = ASSET_FILENAMES[asset_slot]
-    element_timeout = max(45, math.ceil(animation.section_seconds["cycle"] * 2))
+    element_timeout = max(
+        120,
+        math.ceil(args.refresh + animation.section_seconds["cycle"] * 2),
+    )
     if args.dry_run:
         payload = animation_frame(
             asset_filename, "cycle", element_timeout, loop=True
@@ -440,20 +443,21 @@ def main(argv: list[str] | None = None) -> None:
                 if args.verbose:
                     status(f"Showing {available[target]}", timestamp=True)
                 stop_event.wait(animation.section_seconds[f"to_{target}"])
-                if target == 0:
-                    if pending_update is not None:
-                        (
-                            market,
-                            available,
-                            animation,
-                            asset_slot,
-                            asset_filename,
-                        ) = pending_update
-                        pending_update = None
-                        element_timeout = max(
-                            45,
-                            math.ceil(animation.section_seconds["cycle"] * 2),
-                        )
+                if target == 0 and pending_update is not None:
+                    (
+                        market,
+                        available,
+                        animation,
+                        asset_slot,
+                        asset_filename,
+                    ) = pending_update
+                    pending_update = None
+                    element_timeout = max(
+                        120,
+                        math.ceil(
+                            args.refresh + animation.section_seconds["cycle"] * 2
+                        ),
+                    )
                     start_animation()
             except Exception as exc:
                 disconnect(exc)
