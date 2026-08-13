@@ -194,14 +194,14 @@ def stock_color(series: MarketSeries, stale_after: float) -> str:
 
 
 def header_elements(
-    series: MarketSeries, timeout: int, x_offset: int, color: str
+    series: MarketSeries, timeout: int, color: str
 ) -> list[types.DisplayElement]:
     return [
         types.TextElement(
             id="stocks-symbol",
             text=series.symbol[:6],
             font="tiny",
-            x=x_offset,
+            x=0,
             y=0,
             color="#FFFFFFFF",
             timeout=timeout,
@@ -210,7 +210,7 @@ def header_elements(
             id="stocks-change",
             text=f"{series.change_percent:+.1f}%",
             font="tiny",
-            x=x_offset,
+            x=0,
             y=9,
             color=color,
             timeout=timeout,
@@ -243,7 +243,6 @@ def stock_frame(
     timeout: int,
     *,
     reveal: float = 1,
-    x_offset: int = 0,
     stale_after: float = DEFAULT_REFRESH_SECONDS * 3,
 ) -> types.DisplayElements:
     color = stock_color(series, stale_after)
@@ -262,7 +261,7 @@ def stock_frame(
             timeout=timeout,
         ),
     ]
-    elements.extend(header_elements(series, timeout, x_offset, color))
+    elements.extend(header_elements(series, timeout, color))
     for index, (x, y, height) in enumerate(segments):
         elements.append(
             graph_element(
@@ -283,18 +282,16 @@ def stock_delta_frame(
     *,
     previous_reveal: float,
     reveal: float,
-    x_offset: int,
     stale_after: float = DEFAULT_REFRESH_SECONDS * 3,
 ) -> types.DisplayElements:
     color = stock_color(series, stale_after)
     segments = graph_segments(series.closes)
     start = round(len(segments) * max(0, min(1, previous_reveal)))
     end = round(len(segments) * max(0, min(1, reveal)))
-    elements = header_elements(series, timeout, x_offset, color)
-    elements.extend(
+    elements = [
         graph_element(index, segments[index], timeout, color)
         for index in range(start, end)
-    )
+    ]
     return types.DisplayElements(
         application_name=APP_NAME, priority=50, elements=elements
     )
@@ -435,7 +432,6 @@ def main(argv: list[str] | None = None) -> None:
                         series,
                         element_timeout,
                         reveal=0,
-                        x_offset=12,
                         stale_after=args.refresh * 3,
                     )
                 ):
@@ -463,7 +459,6 @@ def main(argv: list[str] | None = None) -> None:
                                 element_timeout,
                                 previous_reveal=previous_progress,
                                 reveal=progress,
-                                x_offset=round(12 * (1 - progress)),
                                 stale_after=args.refresh * 3,
                             )
                         ):

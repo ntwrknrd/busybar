@@ -119,15 +119,17 @@ class StockTests(unittest.TestCase):
             30,
             previous_reveal=0.25,
             reveal=0.5,
-            x_offset=4,
         )
         graph = [
             element
             for element in payload.elements
             if element.id.startswith("stocks-graph-")
         ]
-        self.assertEqual(len(payload.elements), 11)
+        self.assertEqual(len(payload.elements), 9)
         self.assertEqual(len(graph), 9)
+        self.assertTrue(
+            all(element.type == "rectangle" for element in payload.elements)
+        )
         self.assertNotIn(
             "stocks-background", {element.id for element in payload.elements}
         )
