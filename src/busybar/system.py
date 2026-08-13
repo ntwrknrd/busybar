@@ -3,7 +3,6 @@ from __future__ import annotations
 import argparse
 import contextlib
 import json
-import logging
 import math
 import os
 import re
@@ -11,14 +10,14 @@ import shutil
 import signal
 import subprocess
 import time
+from collections import deque
 from concurrent.futures import Future, ThreadPoolExecutor
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from threading import Event
 
 import psutil
 from busylib import BusyBar, types
 
-from busybar.animation import smoothstep
 from busybar.device import (
     BETTER_CONNECTION_POLL_SECONDS,
     Candidate,
@@ -29,15 +28,17 @@ from busybar.device import (
     same_route,
 )
 from busybar.output import status
+from busybar.system_animation import build_alert_animation
 
 APP_NAME = "macos-system-monitor"
-ANIMATION_FPS = 12
-ANIMATION_SECONDS = 0.75
-PAGE_SECONDS = 5
+ALERT_ASSET_FILENAME = "system-alerts.anim"
+SECONDARY_INTERVAL_SECONDS = 5
 PING_TARGET = "1.1.1.1"
-
-# Slide transitions intentionally position elements beyond the display edge.
-logging.getLogger("busylib.client.display").setLevel(logging.ERROR)
+GREEN = "#32D17CFF"
+YELLOW = "#FFD43BFF"
+RED = "#FF3030FF"
+WHITE = "#FFFFFFFF"
+BACKGROUND = "#101722FF"
 
 
 @dataclass(frozen=True)
@@ -46,198 +47,255 @@ class SecondaryMetrics:
     ping_ms: float | None
 
 
-def color_for(percent: float) -> str:
-    if percent >= 85:
-        return "#FF3030FF"
-    if percent >= 65:
-        return "#FFD43BFF"
-    return "#32D17CFF"
+@dataclass
+class MetricTracker:
+    alpha: float
+    values: deque[float] = field(default_factory=lambda: deque(maxlen=30))
+    smoothed: float | None = None
+
+    def update(self, value: float | None) -> None:
+        if value is None:
+            return
+        self.smoothed = (
+            value
+            if self.smoothed is None
+            else self.alpha * value + (1 - self.alpha) * self.smoothed
+        )
+        self.values.append(self.smoothed)
+
+    @property
+    def peak(self) -> float | None:
+        return max(self.values) if self.values else None
+
+    def trend(self, threshold: float) -> str:
+        if self.smoothed is None or len(self.values) < 4:
+            return "-"
+        difference = self.smoothed - self.values[-4]
+        if difference >= threshold:
+            return "^"
+        if difference <= -threshold:
+            return "v"
+        return "-"
 
 
-def static_bar_elements(
-    label: str,
-    y: int,
+@dataclass
+class ThresholdTracker:
+    warning: float
+    critical: float
+    hysteresis: float
+    level: int | None = None
+
+    def update(self, value: float | None) -> int | None:
+        if value is None:
+            return None
+        previous = self.level
+        if previous is None:
+            self.level = (
+                2 if value >= self.critical else 1 if value >= self.warning else 0
+            )
+            return None
+        if previous == 2:
+            self.level = 1 if value < self.critical - self.hysteresis else 2
+        elif previous == 1:
+            if value >= self.critical:
+                self.level = 2
+            elif value < self.warning - self.hysteresis:
+                self.level = 0
+        elif value >= self.critical:
+            self.level = 2
+        elif value >= self.warning:
+            self.level = 1
+        return self.level if self.level > previous else None
+
+
+@dataclass
+class SystemState:
+    cpu: MetricTracker = field(default_factory=lambda: MetricTracker(0.35))
+    memory: MetricTracker = field(default_factory=lambda: MetricTracker(0.5))
+    temperature: MetricTracker = field(default_factory=lambda: MetricTracker(0.35))
+    ping: MetricTracker = field(default_factory=lambda: MetricTracker(0.35))
+    levels: dict[str, ThresholdTracker] = field(
+        default_factory=lambda: {
+            "cpu": ThresholdTracker(65, 85, 3),
+            "memory": ThresholdTracker(65, 85, 3),
+            "temperature": ThresholdTracker(70, 85, 2),
+            "ping": ThresholdTracker(30, 80, 5),
+        }
+    )
+
+    def update(
+        self,
+        cpu: float | None = None,
+        memory: float | None = None,
+        secondary: SecondaryMetrics | None = None,
+    ) -> tuple[str, int] | None:
+        samples = {"cpu": cpu, "memory": memory}
+        if secondary is not None:
+            samples.update(
+                temperature=secondary.temperature,
+                ping=secondary.ping_ms,
+            )
+        alert: tuple[str, int] | None = None
+        for name, value in samples.items():
+            tracker = getattr(self, name)
+            tracker.update(value)
+            raised = self.levels[name].update(tracker.smoothed)
+            if raised is not None and (alert is None or raised > alert[1]):
+                alert = (name, raised)
+        return alert
+
+
+def level_color(level: int | None) -> str:
+    return RED if level == 2 else YELLOW if level == 1 else GREEN
+
+
+def normalized(value: float | None, low: float, high: float) -> float:
+    if value is None:
+        return 0
+    return max(0, min(1, (value - low) / (high - low)))
+
+
+def format_ping(value: float | None) -> str:
+    if value is None:
+        return "--ms"
+    if value >= 1000:
+        return f"{value / 1000:.1f}s"
+    return f"{value:.0f}ms"
+
+
+def metric_elements(
+    *,
     prefix: str,
-    timeout: int | None = None,
-    x_offset: int = 0,
+    label: str,
+    value_text: str,
+    value: float | None,
+    peak: float | None,
+    low: float,
+    high: float,
+    trend: str,
+    level: int | None,
+    x: int,
+    y: int,
+    timeout: int | None,
 ) -> list[types.DisplayElement]:
+    width = 35
+    color = level_color(level)
+    value_width = max(1, round(width * normalized(value, low, high)))
+    peak_x = x + round((width - 1) * normalized(peak, low, high))
     return [
         types.TextElement(
             id=f"{prefix}-label",
             text=label,
             font="tiny",
-            x=x_offset,
+            x=x,
             y=y,
+            color=WHITE,
+            timeout=timeout,
+        ),
+        types.TextElement(
+            id=f"{prefix}-value-text",
+            text=value_text,
+            font="tiny",
+            x=x + 14,
+            y=y,
+            color=color,
+            timeout=timeout,
+        ),
+        types.TextElement(
+            id=f"{prefix}-trend",
+            text=trend,
+            font="tiny",
+            x=x + 31,
+            y=y,
+            color=color,
             timeout=timeout,
         ),
         types.RectangleElement(
             id=f"{prefix}-background",
-            x=17 + x_offset,
-            y=y,
-            width=36,
-            height=5,
+            x=x,
+            y=y + 6,
+            width=width,
+            height=1,
             fill="solid",
-            fill_colors=["#202838FF"],
+            fill_colors=[BACKGROUND],
             border_width=0,
             timeout=timeout,
         ),
-    ]
-
-
-def dynamic_bar_elements(
-    percent: float,
-    y: int,
-    prefix: str,
-    timeout: int | None = None,
-    *,
-    text: str | None = None,
-    color: str | None = None,
-    x_offset: int = 0,
-) -> list[types.DisplayElement]:
-    value = max(0.0, min(100.0, percent))
-    width = max(1, round(36 * value / 100))
-    return [
         types.RectangleElement(
             id=f"{prefix}-value",
-            x=17 + x_offset,
-            y=y,
-            width=width,
-            height=5,
+            x=x,
+            y=y + 6,
+            width=value_width,
+            height=1,
             fill="solid",
-            fill_colors=[color or color_for(value)],
+            fill_colors=[color],
             border_width=0,
             timeout=timeout,
         ),
-        types.TextElement(
-            id=f"{prefix}-percent",
-            text=text or f"{value:2.0f}%",
-            font="tiny",
-            x=55 + x_offset,
-            y=y,
-            color=color or color_for(value),
+        types.RectangleElement(
+            id=f"{prefix}-peak",
+            x=peak_x,
+            y=y + 6,
+            width=1,
+            height=1,
+            fill="solid",
+            fill_colors=[WHITE if peak is not None else BACKGROUND],
+            border_width=0,
             timeout=timeout,
         ),
     ]
 
 
-def static_frame(timeout: int | None = None) -> types.DisplayElements:
-    elements = static_bar_elements("CPU", 1, "cpu", timeout)
-    elements.extend(static_bar_elements("RAM", 9, "ram", timeout))
-    return types.DisplayElements(
-        application_name=APP_NAME, priority=50, elements=elements
-    )
-
-
-def dynamic_frame(
-    cpu: float, memory: float, timeout: int | None = None
-) -> types.DisplayElements:
-    elements = dynamic_bar_elements(cpu, 1, "cpu", timeout)
-    elements.extend(dynamic_bar_elements(memory, 9, "ram", timeout))
-    return types.DisplayElements(
-        application_name=APP_NAME, priority=50, elements=elements
-    )
-
-
-def frame(
-    cpu: float,
-    memory: float,
+def overview_frame(
+    state: SystemState,
     timeout: int | None = None,
-    x_offset: int = 0,
+    alert: tuple[str, int] | None = None,
 ) -> types.DisplayElements:
-    elements = static_bar_elements("CPU", 1, "cpu", timeout, x_offset)
-    elements.extend(dynamic_bar_elements(cpu, 1, "cpu", timeout, x_offset=x_offset))
-    elements.extend(static_bar_elements("RAM", 9, "ram", timeout, x_offset))
-    elements.extend(dynamic_bar_elements(memory, 9, "ram", timeout, x_offset=x_offset))
-    return types.DisplayElements(
-        application_name=APP_NAME, priority=50, elements=elements
-    )
-
-
-def temperature_color(value: float) -> str:
-    if value >= 85:
-        return "#FF3030FF"
-    if value >= 70:
-        return "#FFD43BFF"
-    return "#32D17CFF"
-
-
-def ping_color(value: float) -> str:
-    if value > 80:
-        return "#FF3030FF"
-    if value >= 30:
-        return "#FFD43BFF"
-    return "#32D17CFF"
-
-
-def secondary_frame(
-    metrics: SecondaryMetrics,
-    timeout: int | None = None,
-    x_offset: int = 0,
-) -> types.DisplayElements:
-    temperature = metrics.temperature
-    ping_ms = metrics.ping_ms
-    temp_value = temperature if temperature is not None else 0
-    ping_value = ping_ms if ping_ms is not None else 0
-    temp_percent = max(0, min(100, (temp_value - 30) / 70 * 100))
-    ping_percent = max(0, min(100, ping_value / 200 * 100))
-    elements = static_bar_elements("TMP", 1, "temp", timeout, x_offset)
-    elements.extend(
-        dynamic_bar_elements(
-            temp_percent,
+    specs = (
+        ("cpu", "CPU", state.cpu, 0, 100, 2, lambda value: f"{value:.0f}"),
+        (
+            "temperature",
+            "TMP",
+            state.temperature,
+            30,
+            100,
             1,
-            "temp",
-            timeout,
-            text=f"{temperature:.0f}C" if temperature is not None else "--C",
-            color=temperature_color(temp_value),
-            x_offset=x_offset,
-        )
+            lambda value: f"{value:.0f}C",
+        ),
+        ("memory", "RAM", state.memory, 0, 100, 2, lambda value: f"{value:.0f}"),
+        ("ping", "NET", state.ping, 0, 200, 5, format_ping),
     )
-    elements.extend(static_bar_elements("NET", 9, "ping", timeout, x_offset))
-    elements.extend(
-        dynamic_bar_elements(
-            ping_percent,
-            9,
-            "ping",
-            timeout,
-            text=f"{ping_ms:.0f}ms" if ping_ms is not None else "--ms",
-            color=ping_color(ping_value),
-            x_offset=x_offset,
+    elements: list[types.DisplayElement] = []
+    for index, (name, label, tracker, low, high, delta, formatter) in enumerate(specs):
+        value = tracker.smoothed
+        elements.extend(
+            metric_elements(
+                prefix=name,
+                label=label,
+                value_text=formatter(value) if value is not None else "--",
+                value=value,
+                peak=tracker.peak,
+                low=low,
+                high=high,
+                trend=tracker.trend(delta),
+                level=state.levels[name].level,
+                x=37 if index % 2 else 0,
+                y=8 if index >= 2 else 0,
+                timeout=timeout,
+            )
         )
-    )
+    if alert is not None:
+        name, level = alert
+        elements.append(
+            types.AnimationElement(
+                id="system-alert",
+                path=ALERT_ASSET_FILENAME,
+                section=f"{name}-{'critical' if level == 2 else 'warning'}",
+                timeout=1,
+            )
+        )
     return types.DisplayElements(
         application_name=APP_NAME, priority=50, elements=elements
-    )
-
-
-def page_frame(
-    page: int,
-    cpu: float,
-    memory: float,
-    secondary: SecondaryMetrics,
-    timeout: int,
-    x_offset: int = 0,
-) -> types.DisplayElements:
-    if page == 0:
-        return frame(cpu, memory, timeout, x_offset)
-    return secondary_frame(secondary, timeout, x_offset)
-
-
-def transition_frame(
-    page: int,
-    progress: float,
-    cpu: float,
-    memory: float,
-    secondary: SecondaryMetrics,
-    timeout: int,
-) -> types.DisplayElements:
-    outgoing = page_frame(page, cpu, memory, secondary, timeout, -round(72 * progress))
-    incoming = page_frame(
-        1 - page, cpu, memory, secondary, timeout, round(72 * (1 - progress))
-    )
-    return types.DisplayElements(
-        application_name=APP_NAME,
-        priority=50,
-        elements=outgoing.elements + incoming.elements,
     )
 
 
@@ -281,10 +339,6 @@ def sample_secondary_metrics() -> SecondaryMetrics:
     return SecondaryMetrics(temperature=temperature, ping_ms=ping_ms)
 
 
-def interpolate(start: float, end: float, progress: float) -> float:
-    return start + (end - start) * progress
-
-
 def parser() -> argparse.ArgumentParser:
     result = argparse.ArgumentParser(
         description="Show macOS system metrics on BUSY Bar"
@@ -312,8 +366,18 @@ def main(argv: list[str] | None = None) -> None:
     psutil.cpu_percent(interval=None)
     time.sleep(min(args.interval, 0.5))
 
+    cpu = psutil.cpu_percent(interval=None)
+    memory = psutil.virtual_memory().percent
+    initial_secondary = (
+        sample_secondary_metrics()
+        if args.dry_run or args.once
+        else SecondaryMetrics(None, None)
+    )
+    state = SystemState()
+    state.update(cpu=cpu, memory=memory, secondary=initial_secondary)
+
     if args.dry_run:
-        payload = secondary_frame(sample_secondary_metrics())
+        payload = overview_frame(state)
         print(json.dumps(payload.model_dump(mode="json", exclude_none=True), indent=2))
         return
 
@@ -325,17 +389,15 @@ def main(argv: list[str] | None = None) -> None:
     signal.signal(signal.SIGINT, stop)
     signal.signal(signal.SIGTERM, stop)
 
-    cpu = psutil.cpu_percent(interval=None)
-    memory = psutil.virtual_memory().percent
     element_timeout = max(10, math.ceil(args.interval * 5))
+    alert_animation = build_alert_animation()
     bar: BusyBar | None = None
     candidate: Candidate | None = None
     reconnect_attempt = 0
     next_better_connection_poll = 0.0
     display_suppressed = False
-    page = 0
-    secondary = SecondaryMetrics(None, None)
-    next_page_switch = time.monotonic() + PAGE_SECONDS
+    alert_asset_ready = False
+    next_secondary_sample = time.monotonic() + SECONDARY_INTERVAL_SECONDS
     probe_future: Future[tuple[BusyBar, Candidate]] | None = None
     probe_executor = ThreadPoolExecutor(
         max_workers=1, thread_name_prefix="busybar-probe"
@@ -343,9 +405,49 @@ def main(argv: list[str] | None = None) -> None:
     sensor_executor = ThreadPoolExecutor(
         max_workers=1, thread_name_prefix="busybar-sensors"
     )
-    sensor_future: Future[SecondaryMetrics] | None = sensor_executor.submit(
-        sample_secondary_metrics
+    sensor_future: Future[SecondaryMetrics] | None = (
+        None if args.once else sensor_executor.submit(sample_secondary_metrics)
     )
+
+    def draw(alert: tuple[str, int] | None = None) -> bool:
+        nonlocal display_suppressed
+        if bar is None:
+            raise RuntimeError("BUSY Bar is not connected")
+        try:
+            bar.display_draw(
+                overview_frame(
+                    state,
+                    element_timeout,
+                    alert if alert_asset_ready else None,
+                )
+            )
+        except Exception as exc:
+            if not display_is_busy(exc):
+                raise
+            if not display_suppressed:
+                status(
+                    "Display is owned by a higher-priority mode; waiting",
+                    timestamp=args.verbose,
+                )
+            display_suppressed = True
+            return False
+        if display_suppressed:
+            status("Display available; monitor resumed", timestamp=args.verbose)
+        display_suppressed = False
+        return True
+
+    def disconnect(exc: Exception) -> None:
+        nonlocal bar, candidate, display_suppressed
+        route = candidate.name if candidate is not None else "BUSY Bar"
+        status(
+            f"Lost {route} connection ({type(exc).__name__}); reconnecting",
+            timestamp=args.verbose,
+        )
+        if bar is not None:
+            bar.close()
+        bar = None
+        candidate = None
+        display_suppressed = False
 
     try:
         while not stop_event.is_set():
@@ -353,13 +455,20 @@ def main(argv: list[str] | None = None) -> None:
                 try:
                     bar, candidate = resolve()
                     try:
-                        bar.display_draw(
-                            page_frame(page, cpu, memory, secondary, element_timeout)
-                        )
+                        if not alert_asset_ready:
+                            bar.assets_upload(
+                                APP_NAME,
+                                ALERT_ASSET_FILENAME,
+                                alert_animation.data,
+                            )
+                            alert_asset_ready = True
                     except Exception as exc:
-                        if not display_is_busy(exc):
-                            raise
-                        display_suppressed = True
+                        if args.verbose:
+                            status(
+                                f"Alert animation unavailable ({type(exc).__name__}); continuing without alerts",
+                                timestamp=True,
+                            )
+                    draw()
                 except Exception as exc:
                     if bar is not None:
                         bar.close()
@@ -375,11 +484,6 @@ def main(argv: list[str] | None = None) -> None:
                     continue
 
                 status(f"Connected via {candidate.name}", timestamp=args.verbose)
-                if display_suppressed:
-                    status(
-                        "Display is owned by a higher-priority mode; waiting",
-                        timestamp=args.verbose,
-                    )
                 reconnect_attempt = 0
                 next_better_connection_poll = (
                     time.monotonic() + BETTER_CONNECTION_POLL_SECONDS
@@ -387,10 +491,28 @@ def main(argv: list[str] | None = None) -> None:
                 if args.once:
                     break
 
+            if stop_event.wait(args.interval):
+                break
+
             try:
+                alert = state.update(
+                    cpu=psutil.cpu_percent(interval=None),
+                    memory=psutil.virtual_memory().percent,
+                )
                 if sensor_future is not None and sensor_future.done():
-                    with contextlib.suppress(Exception):
-                        secondary = sensor_future.result()
+                    try:
+                        secondary_alert = state.update(secondary=sensor_future.result())
+                    except Exception as exc:
+                        if args.verbose:
+                            status(
+                                f"Sensor sample failed ({type(exc).__name__})",
+                                timestamp=True,
+                            )
+                    else:
+                        if secondary_alert is not None and (
+                            alert is None or secondary_alert[1] > alert[1]
+                        ):
+                            alert = secondary_alert
                     sensor_future = None
 
                 if probe_future is not None and probe_future.done():
@@ -412,20 +534,7 @@ def main(argv: list[str] | None = None) -> None:
                             bar = probe_bar
                             candidate = probe_candidate
                             old_bar.close()
-                            try:
-                                bar.display_draw(
-                                    page_frame(
-                                        page,
-                                        cpu,
-                                        memory,
-                                        secondary,
-                                        element_timeout,
-                                    )
-                                )
-                            except Exception as exc:
-                                if not display_is_busy(exc):
-                                    raise
-                                display_suppressed = True
+                            draw()
                             status(
                                 f"Switched to {candidate.name}",
                                 timestamp=args.verbose,
@@ -434,90 +543,19 @@ def main(argv: list[str] | None = None) -> None:
                             probe_bar.close()
                     probe_future = None
 
-                if (
-                    probe_future is None
-                    and time.monotonic() >= next_better_connection_poll
-                ):
+                now = time.monotonic()
+                if probe_future is None and now >= next_better_connection_poll:
                     if args.verbose:
                         status("Checking for a better connection", timestamp=True)
                     probe_future = probe_executor.submit(resolve)
-                    next_better_connection_poll = (
-                        time.monotonic() + BETTER_CONNECTION_POLL_SECONDS
-                    )
+                    next_better_connection_poll = now + BETTER_CONNECTION_POLL_SECONDS
+                if sensor_future is None and now >= next_secondary_sample:
+                    sensor_future = sensor_executor.submit(sample_secondary_metrics)
+                    next_secondary_sample = now + SECONDARY_INTERVAL_SECONDS
 
-                if stop_event.wait(args.interval):
-                    break
-                target_cpu = psutil.cpu_percent(interval=None)
-                target_memory = psutil.virtual_memory().percent
-                switching_page = time.monotonic() >= next_page_switch
-                steps = max(
-                    1, round(ANIMATION_FPS * min(ANIMATION_SECONDS, args.interval))
-                )
-                animation_started = time.monotonic()
-                for step in range(1, steps + 1):
-                    if stop_event.is_set():
-                        break
-                    linear_progress = step / steps
-                    progress = (
-                        smoothstep(linear_progress)
-                        if switching_page
-                        else linear_progress
-                    )
-                    try:
-                        payload = (
-                            transition_frame(
-                                page,
-                                progress,
-                                interpolate(cpu, target_cpu, progress),
-                                interpolate(memory, target_memory, progress),
-                                secondary,
-                                element_timeout,
-                            )
-                            if switching_page
-                            else page_frame(
-                                page,
-                                interpolate(cpu, target_cpu, progress),
-                                interpolate(memory, target_memory, progress),
-                                secondary,
-                                element_timeout,
-                            )
-                        )
-                        bar.display_draw(payload)
-                    except Exception as exc:
-                        if not display_is_busy(exc):
-                            raise
-                        if not display_suppressed:
-                            status(
-                                "Display is owned by a higher-priority mode; waiting",
-                                timestamp=args.verbose,
-                            )
-                        display_suppressed = True
-                        break
-                    else:
-                        if display_suppressed:
-                            status(
-                                "Display available; monitor resumed",
-                                timestamp=args.verbose,
-                            )
-                        display_suppressed = False
-                    frame_deadline = animation_started + step / ANIMATION_FPS
-                    if stop_event.wait(max(0, frame_deadline - time.monotonic())):
-                        break
-                cpu, memory = target_cpu, target_memory
-                if switching_page:
-                    page = 1 - page
-                    next_page_switch = time.monotonic() + PAGE_SECONDS
-                    if page == 1 and sensor_future is None:
-                        sensor_future = sensor_executor.submit(sample_secondary_metrics)
+                draw(alert)
             except Exception as exc:
-                status(
-                    f"Lost {candidate.name} connection ({type(exc).__name__}); reconnecting",
-                    timestamp=args.verbose,
-                )
-                bar.close()
-                bar = None
-                candidate = None
-                display_suppressed = False
+                disconnect(exc)
     finally:
         if probe_future is not None and probe_future.done():
             with contextlib.suppress(Exception):

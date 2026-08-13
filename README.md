@@ -5,16 +5,20 @@ The `busybar` CLI runs separate applications on a Flipper BUSY Bar:
 - `busybar system` displays live CPU, memory, CPU temperature, and ping latency.
 - `busybar stocks` rotates through intraday changes and charts.
 
-The system application's two dashboard pages rotate every five seconds with a
-horizontal slide transition.
-Transitions use latency-aware frame pacing and eased motion to remain smooth
-over Wi-Fi without delaying each frame by the API round-trip time.
-Values animate smoothly in place without clearing the display between samples.
-Every update sends a complete frame, so the monitor can redraw itself after the
-physical mode selector temporarily gives the display to another application.
-The monitor removes only its own display elements when it exits. Elements also
-expire automatically if the process crashes, allowing the Bar to return to its
-previous mode without a global display reset.
+The system application keeps CPU, memory, CPU temperature, and ping latency
+visible together in a stable four-cell overview. Each cell includes a compact
+value, direction indicator, utilization meter, and recent peak marker. Samples
+are smoothed, and warning colors use hysteresis so noisy values do not flicker
+between states. CPU and memory update at the configured interval; temperature
+and ping are sampled independently every five seconds.
+
+Crossing a warning or critical threshold briefly displays a preloaded on-device
+alert. Asset upload failure does not stop the monitor; it continues without
+alerts. Every metric update sends a complete overview, so the monitor can
+redraw itself after the physical mode selector temporarily gives the display to
+another application. The monitor removes only its own display elements when it
+exits. Elements also expire automatically if the process crashes, allowing the
+Bar to return to its previous mode without a global display reset.
 
 ## Setup
 
@@ -74,8 +78,7 @@ every stock page into a cached, continuously looping animation asset. The BUSY
 Bar plays the 24 FPS vertical page swipes and chart reveals locally, without
 clearing the display or making an HTTP request for each frame. Quote refreshes
 rebuild the inactive asset slot before switching to it at a cycle boundary.
-Failed Yahoo
-refreshes retain the previous asset, use exponential backoff, and mark data
+Failed Yahoo refreshes retain the previous asset, use exponential backoff, and mark data
 older than three refresh intervals in yellow.
 
 The connection order is mDNS discovery, USB at `10.0.4.20`, the configured

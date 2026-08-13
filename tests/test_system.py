@@ -4,7 +4,7 @@ from unittest.mock import patch
 
 from busylib import exceptions
 
-from busybar.animation import smoothstep
+from busybar.anim import SIGNATURE
 from busybar.device import (
     USB_ADDRESS,
     candidates,
@@ -14,17 +14,15 @@ from busybar.device import (
     same_route,
 )
 from busybar.system import (
+    ALERT_ASSET_FILENAME,
+    MetricTracker,
     SecondaryMetrics,
-    color_for,
-    dynamic_frame,
-    frame,
-    interpolate,
-    ping_color,
-    secondary_frame,
-    static_frame,
-    temperature_color,
-    transition_frame,
+    SystemState,
+    ThresholdTracker,
+    format_ping,
+    overview_frame,
 )
+from busybar.system_animation import build_alert_animation
 
 
 def candidates_without_discovery():
@@ -36,11 +34,6 @@ def candidates_without_discovery():
 
 
 class SystemTests(unittest.TestCase):
-    def test_threshold_colors(self) -> None:
-        self.assertEqual(color_for(64), "#32D17CFF")
-        self.assertEqual(color_for(65), "#FFD43BFF")
-        self.assertEqual(color_for(85), "#FF3030FF")
-
     @patch("busybar.device.BusyBarDevices.discover", return_value=[])
     def test_fallback_order(self, _discover: object) -> None:
         environment = {
@@ -78,72 +71,73 @@ class SystemTests(unittest.TestCase):
         self.assertTrue(display_is_busy(conflict))
         self.assertFalse(display_is_busy(failure))
 
-    def test_frame_clamps_percentages(self) -> None:
-        payload = frame(-4, 140)
-        cpu_bar = next(
-            element for element in payload.elements if element.id == "cpu-value"
-        )
-        ram_bar = next(
-            element for element in payload.elements if element.id == "ram-value"
-        )
-        self.assertEqual(cpu_bar.width, 1)
-        self.assertEqual(ram_bar.width, 36)
+    def test_metric_tracker_smooths_and_tracks_peak_and_trend(self) -> None:
+        tracker = MetricTracker(alpha=0.5)
+        for value in (10, 20, 30, 40):
+            tracker.update(value)
+        self.assertAlmostEqual(tracker.smoothed or 0, 31.25)
+        self.assertEqual(tracker.peak, 31.25)
+        self.assertEqual(tracker.trend(2), "^")
 
-    def test_static_and_dynamic_elements_are_separate(self) -> None:
-        self.assertEqual(
-            {element.id for element in static_frame().elements},
-            {"cpu-label", "cpu-background", "ram-label", "ram-background"},
-        )
-        self.assertEqual(
-            {element.id for element in dynamic_frame(20, 40).elements},
-            {"cpu-value", "cpu-percent", "ram-value", "ram-percent"},
-        )
+    def test_thresholds_use_hysteresis_and_report_only_increases(self) -> None:
+        tracker = ThresholdTracker(warning=65, critical=85, hysteresis=3)
+        self.assertIsNone(tracker.update(60))
+        self.assertEqual(tracker.update(66), 1)
+        self.assertIsNone(tracker.update(64))
+        self.assertEqual(tracker.level, 1)
+        self.assertIsNone(tracker.update(61))
+        self.assertEqual(tracker.level, 0)
+        self.assertEqual(tracker.update(90), 2)
+        self.assertIsNone(tracker.update(83))
+        self.assertEqual(tracker.level, 2)
+        self.assertIsNone(tracker.update(81))
+        self.assertEqual(tracker.level, 1)
 
-    def test_interpolation(self) -> None:
-        self.assertEqual(interpolate(20, 80, 0), 20)
-        self.assertEqual(interpolate(20, 80, 0.5), 50)
-        self.assertEqual(interpolate(20, 80, 1), 80)
-
-    def test_smoothstep_easing(self) -> None:
-        self.assertEqual(smoothstep(-1), 0)
-        self.assertEqual(smoothstep(0.5), 0.5)
-        self.assertEqual(smoothstep(2), 1)
-
-    def test_elements_can_expire_after_a_crash(self) -> None:
-        payload = frame(20, 40, timeout=7)
-        self.assertTrue(all(element.timeout == 7 for element in payload.elements))
-
-    def test_each_frame_is_complete(self) -> None:
-        payload = frame(20, 40)
-        self.assertEqual(
-            {element.id for element in payload.elements},
-            {
-                "cpu-label",
-                "cpu-background",
-                "cpu-value",
-                "cpu-percent",
-                "ram-label",
-                "ram-background",
-                "ram-value",
-                "ram-percent",
-            },
-        )
-
-    def test_secondary_page_formats_temperature_and_ping(self) -> None:
-        payload = secondary_frame(SecondaryMetrics(67.4, 12.2))
-        values = {
+    def test_overview_shows_all_metrics_without_percent_glyphs(self) -> None:
+        state = SystemState()
+        state.update(cpu=42, memory=76, secondary=SecondaryMetrics(67, 12))
+        payload = overview_frame(state, timeout=7)
+        text = {
             element.id: getattr(element, "text", None) for element in payload.elements
         }
-        self.assertEqual(values["temp-percent"], "67C")
-        self.assertEqual(values["ping-percent"], "12ms")
-        self.assertEqual(temperature_color(70), "#FFD43BFF")
-        self.assertEqual(ping_color(81), "#FF3030FF")
+        self.assertEqual(text["cpu-value-text"], "42")
+        self.assertEqual(text["memory-value-text"], "76")
+        self.assertEqual(text["temperature-value-text"], "67C")
+        self.assertEqual(text["ping-value-text"], "12ms")
+        self.assertNotIn("%", "".join(value for value in text.values() if value))
+        self.assertEqual(len(payload.elements), 24)
+        self.assertTrue(all(element.timeout == 7 for element in payload.elements))
 
-    def test_transition_contains_both_pages(self) -> None:
-        payload = transition_frame(0, 0.5, 20, 40, SecondaryMetrics(60, 10), 10)
-        ids = {element.id for element in payload.elements}
-        self.assertIn("cpu-label", ids)
-        self.assertIn("temp-label", ids)
+    def test_overview_clamps_meter_widths(self) -> None:
+        state = SystemState()
+        state.update(cpu=-4, memory=140, secondary=SecondaryMetrics(20, 400))
+        payload = overview_frame(state)
+        elements = {element.id: element for element in payload.elements}
+        self.assertEqual(elements["cpu-value"].width, 1)
+        self.assertEqual(elements["memory-value"].width, 35)
+        self.assertEqual(elements["ping-value"].width, 35)
+
+    def test_overview_can_overlay_preloaded_alert_section(self) -> None:
+        state = SystemState()
+        state.update(cpu=20, memory=30, secondary=SecondaryMetrics(50, 10))
+        payload = overview_frame(state, alert=("temperature", 2))
+        alert = next(
+            element for element in payload.elements if element.id == "system-alert"
+        )
+        self.assertEqual(alert.path, ALERT_ASSET_FILENAME)
+        self.assertEqual(alert.section, "temperature-critical")
+
+    def test_alert_animation_contains_every_threshold_section(self) -> None:
+        animation = build_alert_animation()
+        self.assertTrue(animation.data.startswith(SIGNATURE))
+        self.assertEqual(len(animation.sections), 8)
+        self.assertIn("cpu-warning", animation.sections)
+        self.assertIn(b"temperature-critical\0", animation.data)
+
+    def test_ping_format_is_compact(self) -> None:
+        self.assertEqual(format_ping(None), "--ms")
+        self.assertEqual(format_ping(12.4), "12ms")
+        self.assertEqual(format_ping(1200), "1.2s")
 
 
 if __name__ == "__main__":
