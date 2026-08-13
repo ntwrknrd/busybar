@@ -69,13 +69,13 @@ class MetricTracker:
 
     def trend(self, threshold: float) -> str:
         if self.smoothed is None or len(self.values) < 4:
-            return "-"
+            return ""
         difference = self.smoothed - self.values[-4]
         if difference >= threshold:
             return "^"
         if difference <= -threshold:
             return "v"
-        return "-"
+        return "."
 
 
 @dataclass
@@ -157,9 +157,10 @@ def normalized(value: float | None, low: float, high: float) -> float:
 
 def format_ping(value: float | None) -> str:
     if value is None:
-        return "--ms"
-    if value >= 1000:
-        return f"{value / 1000:.1f}s"
+        return "--"
+    if value >= 100:
+        seconds = value / 1000
+        return f"{seconds:.1f}s" if seconds < 10 else f"{seconds:.0f}s"
     return f"{value:.0f}ms"
 
 
@@ -193,19 +194,19 @@ def metric_elements(
             timeout=timeout,
         ),
         types.TextElement(
-            id=f"{prefix}-value-text",
-            text=value_text,
+            id=f"{prefix}-trend",
+            text=trend,
             font="tiny",
-            x=x + 14,
+            x=x + 13,
             y=y,
             color=color,
             timeout=timeout,
         ),
         types.TextElement(
-            id=f"{prefix}-trend",
-            text=trend,
+            id=f"{prefix}-value-text",
+            text=value_text,
             font="tiny",
-            x=x + 31,
+            x=x + 18,
             y=y,
             color=color,
             timeout=timeout,

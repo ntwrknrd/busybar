@@ -79,6 +79,14 @@ class SystemTests(unittest.TestCase):
         self.assertEqual(tracker.peak, 31.25)
         self.assertEqual(tracker.trend(2), "^")
 
+    def test_trend_is_blank_until_ready_and_dot_when_stable(self) -> None:
+        tracker = MetricTracker(alpha=1)
+        tracker.update(10)
+        self.assertEqual(tracker.trend(2), "")
+        for value in (10, 10, 10):
+            tracker.update(value)
+        self.assertEqual(tracker.trend(2), ".")
+
     def test_thresholds_use_hysteresis_and_report_only_increases(self) -> None:
         tracker = ThresholdTracker(warning=65, critical=85, hysteresis=3)
         self.assertIsNone(tracker.update(60))
@@ -135,9 +143,11 @@ class SystemTests(unittest.TestCase):
         self.assertIn(b"temperature-critical\0", animation.data)
 
     def test_ping_format_is_compact(self) -> None:
-        self.assertEqual(format_ping(None), "--ms")
+        self.assertEqual(format_ping(None), "--")
         self.assertEqual(format_ping(12.4), "12ms")
+        self.assertEqual(format_ping(123), "0.1s")
         self.assertEqual(format_ping(1200), "1.2s")
+        self.assertEqual(format_ping(12000), "12s")
 
 
 if __name__ == "__main__":
