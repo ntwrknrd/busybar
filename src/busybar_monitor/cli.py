@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import math
 import os
@@ -8,15 +9,18 @@ import signal
 import sys
 import time
 from dataclasses import dataclass
+from threading import Event
 from typing import Iterator
 
 import psutil
-from busylib import BusyBar, BusyBarDevices, types
+from busylib import BusyBar, BusyBarDevices, exceptions, types
 
 APP_NAME = "macos-system-monitor"
 USB_ADDRESS = "10.0.4.20"
 ANIMATION_FPS = 10
 ANIMATION_SECONDS = 0.5
+BETTER_CONNECTION_POLL_SECONDS = 30
+RECONNECT_DELAYS = (1, 2, 5, 10, 30)
 
 
 @dataclass(frozen=True)
@@ -24,16 +28,18 @@ class Candidate:
     name: str
     address: str | None
     token: str | None
+    rank: int
 
     def connect(self) -> BusyBar:
         if self.name == "cloud":
-            return BusyBar(token=self.token, timeout=3)
-        return BusyBar(self.address, token=self.token, timeout=2)
+            return BusyBar(token=self.token, timeout=3, max_retries=0)
+        return BusyBar(self.address, token=self.token, timeout=2, max_retries=0)
 
 
 def candidates() -> Iterator[Candidate]:
     lan_token = os.getenv("BUSYBAR_LAN_TOKEN") or None
     seen: set[str] = set()
+    found: list[Candidate] = []
 
     try:
         devices = BusyBarDevices.discover()
@@ -41,24 +47,33 @@ def candidates() -> Iterator[Candidate]:
         devices = []
 
     for device in devices:
-        for affinity, token in (("over_wifi", lan_token), ("over_usb", None)):
+        for affinity, token, rank in (
+            ("over_usb", None, 0),
+            ("over_wifi", lan_token, 1),
+        ):
             address = device.get_address(affinity)
             if address and address not in seen:
                 seen.add(address)
-                yield Candidate(f"mDNS {affinity.removeprefix('over_')}", address, token)
+                found.append(
+                    Candidate(
+                        f"mDNS {affinity.removeprefix('over_')}", address, token, rank
+                    )
+                )
 
     if USB_ADDRESS not in seen:
         seen.add(USB_ADDRESS)
-        yield Candidate("USB", USB_ADDRESS, None)
+        found.append(Candidate("USB", USB_ADDRESS, None, 0))
 
     home_address = os.getenv("BUSYBAR_HOME_IP")
     if home_address and home_address not in seen:
         seen.add(home_address)
-        yield Candidate("home LAN", home_address, lan_token)
+        found.append(Candidate("home LAN", home_address, lan_token, 1))
 
     cloud_token = os.getenv("BUSYBAR_CLOUD_TOKEN")
     if cloud_token:
-        yield Candidate("cloud", None, cloud_token)
+        found.append(Candidate("cloud", None, cloud_token, 2))
+
+    yield from sorted(found, key=lambda candidate: candidate.rank)
 
 
 def resolve() -> tuple[BusyBar, Candidate]:
@@ -168,6 +183,22 @@ def interpolate(start: float, end: float, progress: float) -> float:
     return start + (end - start) * progress
 
 
+def reconnect_delay(attempt: int) -> int:
+    return RECONNECT_DELAYS[min(attempt, len(RECONNECT_DELAYS) - 1)]
+
+
+def same_route(left: Candidate, right: Candidate) -> bool:
+    return left.address == right.address and left.rank == right.rank
+
+
+def is_better(new: Candidate, current: Candidate) -> bool:
+    return new.rank < current.rank
+
+
+def display_is_busy(exc: Exception) -> bool:
+    return isinstance(exc, exceptions.BusyBarAPIError) and exc.status_code == 409
+
+
 def parser() -> argparse.ArgumentParser:
     result = argparse.ArgumentParser(description="Show macOS CPU and RAM usage on BUSY Bar")
     result.add_argument("--interval", type=float, default=2.0, help="refresh interval in seconds")
@@ -189,18 +220,10 @@ def main() -> None:
         print(json.dumps(payload.model_dump(mode="json", exclude_none=True), indent=2))
         return
 
-    try:
-        bar, candidate = resolve()
-    except RuntimeError as exc:
-        print(f"busybar-monitor: {exc}", file=sys.stderr)
-        raise SystemExit(1) from exc
-
-    print(f"Connected via {candidate.name}", file=sys.stderr)
-    stopping = False
+    stop_event = Event()
 
     def stop(_signum: int, _frame: object) -> None:
-        nonlocal stopping
-        stopping = True
+        stop_event.set()
 
     signal.signal(signal.SIGINT, stop)
     signal.signal(signal.SIGTERM, stop)
@@ -208,29 +231,124 @@ def main() -> None:
     cpu = psutil.cpu_percent(interval=None)
     memory = psutil.virtual_memory().percent
     element_timeout = max(5, math.ceil(args.interval * 3))
+    bar: BusyBar | None = None
+    candidate: Candidate | None = None
+    reconnect_attempt = 0
+    next_better_connection_poll = 0.0
+    display_suppressed = False
 
     try:
-        bar.display_draw(frame(cpu, memory, element_timeout))
-        while not stopping and not args.once:
-            time.sleep(args.interval)
-            target_cpu = psutil.cpu_percent(interval=None)
-            target_memory = psutil.virtual_memory().percent
-            steps = max(1, round(ANIMATION_FPS * min(ANIMATION_SECONDS, args.interval)))
-            for step in range(1, steps + 1):
-                if stopping:
-                    break
-                progress = step / steps
-                bar.display_draw(
-                    frame(
-                        interpolate(cpu, target_cpu, progress),
-                        interpolate(memory, target_memory, progress),
-                        element_timeout,
+        while not stop_event.is_set():
+            if bar is None:
+                try:
+                    bar, candidate = resolve()
+                    try:
+                        bar.display_draw(frame(cpu, memory, element_timeout))
+                    except Exception as exc:
+                        if not display_is_busy(exc):
+                            raise
+                        display_suppressed = True
+                except Exception as exc:
+                    if bar is not None:
+                        bar.close()
+                    bar = None
+                    candidate = None
+                    delay = reconnect_delay(reconnect_attempt)
+                    reconnect_attempt += 1
+                    print(
+                        f"BUSY Bar unavailable ({exc}); retrying in {delay}s",
+                        file=sys.stderr,
                     )
+                    stop_event.wait(delay)
+                    continue
+
+                print(f"Connected via {candidate.name}", file=sys.stderr)
+                if display_suppressed:
+                    print(
+                        "Display is owned by a higher-priority mode; waiting",
+                        file=sys.stderr,
+                    )
+                reconnect_attempt = 0
+                next_better_connection_poll = (
+                    time.monotonic() + BETTER_CONNECTION_POLL_SECONDS
                 )
-                time.sleep(1 / ANIMATION_FPS)
-            cpu, memory = target_cpu, target_memory
+                if args.once:
+                    break
+
+            try:
+                if time.monotonic() >= next_better_connection_poll:
+                    try:
+                        probe_bar, probe_candidate = resolve()
+                    except RuntimeError:
+                        pass
+                    else:
+                        if same_route(probe_candidate, candidate):
+                            probe_bar.close()
+                        elif is_better(probe_candidate, candidate):
+                            old_bar = bar
+                            bar = probe_bar
+                            candidate = probe_candidate
+                            old_bar.close()
+                            try:
+                                bar.display_draw(frame(cpu, memory, element_timeout))
+                            except Exception as exc:
+                                if not display_is_busy(exc):
+                                    raise
+                                display_suppressed = True
+                            print(f"Switched to {candidate.name}", file=sys.stderr)
+                        else:
+                            probe_bar.close()
+                    next_better_connection_poll = (
+                        time.monotonic() + BETTER_CONNECTION_POLL_SECONDS
+                    )
+
+                if stop_event.wait(args.interval):
+                    break
+                target_cpu = psutil.cpu_percent(interval=None)
+                target_memory = psutil.virtual_memory().percent
+                steps = max(
+                    1, round(ANIMATION_FPS * min(ANIMATION_SECONDS, args.interval))
+                )
+                for step in range(1, steps + 1):
+                    if stop_event.is_set():
+                        break
+                    progress = step / steps
+                    try:
+                        bar.display_draw(
+                            frame(
+                                interpolate(cpu, target_cpu, progress),
+                                interpolate(memory, target_memory, progress),
+                                element_timeout,
+                            )
+                        )
+                    except Exception as exc:
+                        if not display_is_busy(exc):
+                            raise
+                        if not display_suppressed:
+                            print(
+                                "Display is owned by a higher-priority mode; waiting",
+                                file=sys.stderr,
+                            )
+                        display_suppressed = True
+                        break
+                    else:
+                        if display_suppressed:
+                            print("Display available; monitor resumed", file=sys.stderr)
+                        display_suppressed = False
+                    if stop_event.wait(1 / ANIMATION_FPS):
+                        break
+                cpu, memory = target_cpu, target_memory
+            except Exception as exc:
+                print(
+                    f"Lost {candidate.name} connection ({type(exc).__name__}); reconnecting",
+                    file=sys.stderr,
+                )
+                bar.close()
+                bar = None
+                candidate = None
+                display_suppressed = False
     finally:
-        try:
-            bar.display_clear(application_name=APP_NAME)
-        finally:
+        if bar is not None:
+            with contextlib.suppress(Exception):
+                bar.display_clear(application_name=APP_NAME)
             bar.close()

@@ -2,15 +2,27 @@ import os
 import unittest
 from unittest.mock import patch
 
+from busylib import exceptions
+
 from busybar_monitor.cli import (
     USB_ADDRESS,
     candidates,
     color_for,
     dynamic_frame,
+    display_is_busy,
     frame,
     interpolate,
+    is_better,
+    reconnect_delay,
+    same_route,
     static_frame,
 )
+
+
+def candidates_without_discovery():
+    with patch("busybar_monitor.cli.BusyBarDevices.discover", return_value=[]):
+        with patch.dict(os.environ, {}, clear=True):
+            return list(candidates())
 
 
 class MonitorTests(unittest.TestCase):
@@ -34,6 +46,27 @@ class MonitorTests(unittest.TestCase):
         self.assertIsNone(found[0].token)
         self.assertEqual(found[1].token, "lan-secret")
         self.assertEqual(found[2].token, "cloud-secret")
+
+    def test_connection_preference_and_backoff(self) -> None:
+        usb = next(
+            candidate
+            for candidate in candidates_without_discovery()
+            if candidate.name == "USB"
+        )
+        cloud = type(usb)("cloud", None, "secret", 2)
+        self.assertTrue(is_better(usb, cloud))
+        self.assertFalse(is_better(cloud, usb))
+        alternate_usb = type(usb)("other USB", USB_ADDRESS, None, 0)
+        self.assertTrue(same_route(usb, alternate_usb))
+        self.assertEqual(
+            [reconnect_delay(i) for i in range(7)], [1, 2, 5, 10, 30, 30, 30]
+        )
+
+    def test_display_conflict_is_not_a_connection_failure(self) -> None:
+        conflict = exceptions.BusyBarAPIError("busy", status_code=409)
+        failure = exceptions.BusyBarAPIError("failed", status_code=500)
+        self.assertTrue(display_is_busy(conflict))
+        self.assertFalse(display_is_busy(failure))
 
     def test_frame_clamps_percentages(self) -> None:
         payload = frame(-4, 140)
