@@ -7,6 +7,7 @@ from unittest.mock import patch
 
 from busybar.app import main as app_main
 from busybar.stocks import (
+    DEFAULT_SYMBOLS,
     MarketSeries,
     animation_frame,
     animation_pages,
@@ -38,6 +39,44 @@ def yahoo_payload() -> dict:
 
 
 class StockTests(unittest.TestCase):
+    def test_defaults_match_apple_stocks_watchlist(self) -> None:
+        self.assertEqual(
+            DEFAULT_SYMBOLS,
+            (
+                "AAPL",
+                "AMZN",
+                "AMD",
+                "ANET",
+                "AVGO",
+                "CCJ",
+                "CEG",
+                "CSCO",
+                "DBRG",
+                "DELL",
+                "DLR",
+                "^DJI",
+                "EQIX",
+                "GOOG",
+                "HPE",
+                "IBM",
+                "INTC",
+                "LRCX",
+                "META",
+                "MU",
+                "NVDA",
+                "QTUM",
+                "SMR",
+                "^GSPC",
+                "TSM",
+                "VFIAX",
+                "VIGAX",
+                "VLXVX",
+                "VWUAX",
+                "VBTLX",
+                "VWILX",
+            ),
+        )
+
     def test_yahoo_chart_parsing_filters_missing_points(self) -> None:
         series = parse_chart(yahoo_payload(), fetched_at=123)
         self.assertEqual(series.symbol, "AAPL")

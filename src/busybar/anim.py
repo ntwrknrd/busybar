@@ -8,6 +8,8 @@ from dataclasses import dataclass
 SIGNATURE = b"bicycle0"
 HEADER_SIZE = 36
 COLOR_MODE_BGR888 = 0
+PIXEL_SIZE = 3
+MAX_RUN_PIXELS = 127
 
 
 @dataclass(frozen=True)
@@ -15,6 +17,66 @@ class AnimSection:
     name: str
     start: int
     end: int
+
+
+@dataclass
+class _FileFrame:
+    source: bytes
+    encoding: int
+    duration: int
+    data: bytes
+
+
+def _pack_bgr(rgb: bytes) -> bytes:
+    bgr = bytearray(len(rgb))
+    for offset in range(0, len(rgb), PIXEL_SIZE):
+        bgr[offset] = rgb[offset + 2]
+        bgr[offset + 1] = rgb[offset + 1]
+        bgr[offset + 2] = rgb[offset]
+    return bytes(bgr)
+
+
+def _rle_compress(pixels: bytes) -> bytes:
+    blocks = [
+        pixels[offset : offset + PIXEL_SIZE]
+        for offset in range(0, len(pixels), PIXEL_SIZE)
+    ]
+    encoded = bytearray()
+    index = 0
+    while index < len(blocks):
+        repeat = 1
+        while (
+            index + repeat < len(blocks)
+            and repeat < MAX_RUN_PIXELS
+            and blocks[index + repeat] == blocks[index]
+        ):
+            repeat += 1
+        if repeat >= 3:
+            encoded.append(repeat)
+            encoded.extend(blocks[index])
+            index += repeat
+            continue
+
+        literal_start = index
+        literal_count = 0
+        while index < len(blocks) and literal_count < MAX_RUN_PIXELS:
+            repeat = 1
+            while (
+                index + repeat < len(blocks)
+                and repeat < MAX_RUN_PIXELS
+                and blocks[index + repeat] == blocks[index]
+            ):
+                repeat += 1
+            if repeat >= 3:
+                break
+            take = min(repeat, MAX_RUN_PIXELS - literal_count)
+            literal_count += take
+            index += take
+        encoded.append(0x80 | literal_count)
+        encoded.extend(
+            b"".join(blocks[literal_start : literal_start + literal_count])
+        )
+    return bytes(encoded)
 
 
 def encode_anim(
@@ -61,17 +123,24 @@ def encode_anim(
     sections_size = sum(
         14 + len(section.name.encode("ascii")) for section in all_sections
     )
-    encoded_frames: list[tuple[bytes, int]] = []
+    encoded_frames: list[_FileFrame] = []
     for frame in frames:
-        if encoded_frames and encoded_frames[-1][0] == frame:
-            previous, duration = encoded_frames[-1]
-            if duration < 255:
-                encoded_frames[-1] = (previous, duration + 1)
-                continue
-        encoded_frames.append((frame, 1))
+        if (
+            encoded_frames
+            and encoded_frames[-1].source == frame
+            and encoded_frames[-1].duration < 255
+        ):
+            encoded_frames[-1].duration += 1
+            continue
+        packed = _pack_bgr(frame)
+        compressed = _rle_compress(packed)
+        if len(compressed) < len(packed):
+            encoded_frames.append(_FileFrame(frame, 1, 1, compressed))
+        else:
+            encoded_frames.append(_FileFrame(frame, 0, 1, packed))
 
-    encoded_frame_size = 4 + frame_size
-    frames_size = encoded_frame_size * len(encoded_frames)
+    max_encoded_size = max(len(frame.data) for frame in encoded_frames)
+    frames_size = sum(4 + len(frame.data) for frame in encoded_frames)
     header = struct.pack(
         "<8sBBBBBHBIIIII",
         SIGNATURE,
@@ -80,7 +149,7 @@ def encode_anim(
         height,
         COLOR_MODE_BGR888,
         fps,
-        frame_size,
+        max_encoded_size,
         0,
         sections_size,
         frames_size,
@@ -94,11 +163,12 @@ def encode_anim(
     section_data = bytearray()
     display_frame_starts: list[tuple[int, int]] = []
     frame_offset = HEADER_SIZE + sections_size
-    for _frame, duration in encoded_frames:
+    for frame in encoded_frames:
         display_frame_starts.extend(
-            (frame_offset, remaining) for remaining in range(duration, 0, -1)
+            (frame_offset, remaining)
+            for remaining in range(frame.duration, 0, -1)
         )
-        frame_offset += encoded_frame_size
+        frame_offset += 4 + len(frame.data)
     for section in all_sections:
         frame_offset, duration_override = display_frame_starts[section.start]
         section_data.extend(
@@ -114,13 +184,12 @@ def encode_anim(
         section_data.append(0)
 
     frame_data = bytearray()
-    for rgb, duration in encoded_frames:
-        bgr = bytearray(frame_size)
-        for offset in range(0, frame_size, 3):
-            bgr[offset] = rgb[offset + 2]
-            bgr[offset + 1] = rgb[offset + 1]
-            bgr[offset + 2] = rgb[offset]
-        frame_data.extend(struct.pack("<BBH", 0, duration, frame_size))
-        frame_data.extend(bgr)
+    for frame in encoded_frames:
+        frame_data.extend(
+            struct.pack(
+                "<BBH", frame.encoding, frame.duration, len(frame.data)
+            )
+        )
+        frame_data.extend(frame.data)
 
     return bytes(header + section_data + frame_data)

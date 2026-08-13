@@ -56,3 +56,19 @@ class AnimationEncoderTests(unittest.TestCase):
         sections_size = header[8]
         frame_offset = HEADER_SIZE + sections_size
         self.assertEqual(data[frame_offset : frame_offset + 2], bytes((0, 3)))
+
+    def test_compresses_repeated_pixels_with_rle(self) -> None:
+        data = encode_anim(
+            [bytes((1, 2, 3)) * 4],
+            width=4,
+            height=1,
+            fps=24,
+            sections=[],
+        )
+        header = struct.unpack("<8sBBBBBHBIIIII", data[:HEADER_SIZE])
+        frame_offset = HEADER_SIZE + header[8]
+        encoding, duration, encoded_size = struct.unpack(
+            "<BBH", data[frame_offset : frame_offset + 4]
+        )
+        self.assertEqual((encoding, duration, encoded_size), (1, 1, 4))
+        self.assertEqual(data[frame_offset + 4 :], bytes((4, 3, 2, 1)))

@@ -32,7 +32,39 @@ from busybar.output import status
 from busybar.stock_animation import StockAnimation, StockPage, build_stock_animation
 
 APP_NAME = "stocks"
-DEFAULT_SYMBOLS = ("AAPL", "MSFT", "NVDA")
+DEFAULT_SYMBOLS = (
+    "AAPL",
+    "AMZN",
+    "AMD",
+    "ANET",
+    "AVGO",
+    "CCJ",
+    "CEG",
+    "CSCO",
+    "DBRG",
+    "DELL",
+    "DLR",
+    "^DJI",
+    "EQIX",
+    "GOOG",
+    "HPE",
+    "IBM",
+    "INTC",
+    "LRCX",
+    "META",
+    "MU",
+    "NVDA",
+    "QTUM",
+    "SMR",
+    "^GSPC",
+    "TSM",
+    "VFIAX",
+    "VIGAX",
+    "VLXVX",
+    "VWUAX",
+    "VBTLX",
+    "VWILX",
+)
 DEFAULT_REFRESH_SECONDS = 60
 DEFAULT_ROTATE_SECONDS = 10
 YAHOO_URL = "https://query2.finance.yahoo.com/v8/finance/chart/{symbol}"
