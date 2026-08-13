@@ -8,6 +8,7 @@ from unittest.mock import patch
 from busybar.app import main as app_main
 from busybar.stocks import (
     BACKGROUND,
+    GRAPH_X,
     GREEN,
     MarketSeries,
     graph_segments,
@@ -54,7 +55,8 @@ class StockTests(unittest.TestCase):
         self.assertEqual(len(sample_values(values)), 36)
         segments = graph_segments(values)
         self.assertEqual(len(segments), 35)
-        self.assertTrue(all(8 <= y <= 15 for _x, y, _height in segments))
+        self.assertTrue(all(GRAPH_X <= x <= 70 for x, _y, _height in segments))
+        self.assertTrue(all(0 <= y <= 15 for _x, y, _height in segments))
 
     @patch("busybar.stocks.time.time", return_value=100)
     def test_reveal_hides_unfinished_graph_segments(self, _time: object) -> None:
@@ -75,6 +77,30 @@ class StockTests(unittest.TestCase):
             if element.id.startswith("stocks-graph-")
         ]
         self.assertTrue(all(element.fill_colors == [GREEN] for element in graph))
+
+    @patch("busybar.stocks.time.time", return_value=100)
+    def test_text_uses_left_column_and_chart_uses_remaining_height(
+        self, _time: object
+    ) -> None:
+        series = MarketSeries("AAPL", "USD", 102, 100, [1, 2], [100, 102], 100)
+        payload = stock_frame(series, 30)
+        elements = {element.id: element for element in payload.elements}
+        self.assertNotIn("stocks-price", elements)
+        self.assertEqual(
+            (elements["stocks-symbol"].x, elements["stocks-symbol"].y), (0, 0)
+        )
+        self.assertEqual(
+            (elements["stocks-change"].x, elements["stocks-change"].y), (0, 9)
+        )
+        self.assertEqual(
+            (
+                elements["stocks-background"].x,
+                elements["stocks-background"].y,
+                elements["stocks-background"].width,
+                elements["stocks-background"].height,
+            ),
+            (22, 0, 50, 16),
+        )
 
     def test_cache_round_trip(self) -> None:
         series = MarketSeries("AAPL", "USD", 102, 100, [1, 2], [100, 102], 123)
@@ -100,7 +126,7 @@ class StockTests(unittest.TestCase):
             for element in payload.elements
             if element.id.startswith("stocks-graph-")
         ]
-        self.assertEqual(len(payload.elements), 12)
+        self.assertEqual(len(payload.elements), 11)
         self.assertEqual(len(graph), 9)
         self.assertNotIn(
             "stocks-background", {element.id for element in payload.elements}

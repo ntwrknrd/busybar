@@ -3,7 +3,7 @@
 The `busybar` CLI runs separate applications on a Flipper BUSY Bar:
 
 - `busybar system` displays live CPU, memory, CPU temperature, and ping latency.
-- `busybar stocks` rotates through intraday stock prices and charts.
+- `busybar stocks` rotates through intraday percentage changes and charts.
 
 The system application's two dashboard pages rotate every five seconds with a
 horizontal slide transition.

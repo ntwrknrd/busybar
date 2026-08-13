@@ -39,8 +39,10 @@ STALE = "#FFD43BFF"
 DEFAULT_SYMBOLS = ("AAPL", "MSFT", "NVDA")
 DEFAULT_REFRESH_SECONDS = 60
 DEFAULT_ROTATE_SECONDS = 10
-GRAPH_Y = 8
-GRAPH_HEIGHT = 8
+GRAPH_X = 22
+GRAPH_Y = 0
+GRAPH_WIDTH = 50
+GRAPH_HEIGHT = 16
 GRAPH_POINTS = 36
 ANIMATION_FPS = 12
 ANIMATION_SECONDS = 0.75
@@ -173,19 +175,16 @@ def graph_segments(values: list[float]) -> list[tuple[int, int, int]]:
         )
 
     ordinates = [ordinate(value) for value in sampled]
-    width = max(1, 72 // (len(ordinates) - 1))
+    horizontal_range = GRAPH_WIDTH - 2
+    horizontal_steps = max(1, len(ordinates) - 2)
     return [
-        (index * width, min(left, right), abs(right - left) + 1)
+        (
+            GRAPH_X + round(index * horizontal_range / horizontal_steps),
+            min(left, right),
+            abs(right - left) + 1,
+        )
         for index, (left, right) in enumerate(pairwise(ordinates))
     ]
-
-
-def format_price(price: float) -> str:
-    if price >= 1000:
-        return f"{price:.0f}"
-    if price >= 100:
-        return f"{price:.1f}"
-    return f"{price:.2f}"
 
 
 def stock_color(series: MarketSeries, stale_after: float) -> str:
@@ -208,20 +207,11 @@ def header_elements(
             timeout=timeout,
         ),
         types.TextElement(
-            id="stocks-price",
-            text=format_price(series.price),
-            font="tiny",
-            x=25 + x_offset,
-            y=0,
-            color="#FFFFFFFF",
-            timeout=timeout,
-        ),
-        types.TextElement(
             id="stocks-change",
             text=f"{series.change_percent:+.1f}%",
             font="tiny",
-            x=51 + x_offset,
-            y=0,
+            x=x_offset,
+            y=9,
             color=color,
             timeout=timeout,
         ),
@@ -262,9 +252,9 @@ def stock_frame(
     elements: list[types.DisplayElement] = [
         types.RectangleElement(
             id="stocks-background",
-            x=0,
+            x=GRAPH_X,
             y=GRAPH_Y,
-            width=72,
+            width=GRAPH_WIDTH,
             height=GRAPH_HEIGHT,
             fill="solid",
             fill_colors=[BACKGROUND],
