@@ -16,6 +16,7 @@ from busybar.stocks import (
     refresh_series,
     sample_values,
     save_cache,
+    stock_delta_frame,
     stock_frame,
 )
 
@@ -82,6 +83,28 @@ class StockTests(unittest.TestCase):
             save_cache(path, {"AAPL": series})
             self.assertEqual(load_cache(path), {"AAPL": series})
             self.assertEqual(json.loads(path.read_text())["AAPL"]["price"], 102)
+
+    @patch("busybar.stocks.time.time", return_value=100)
+    def test_delta_frame_contains_only_new_graph_segments(self, _time: object) -> None:
+        values = [float(value) for value in range(36)]
+        series = MarketSeries("AAPL", "USD", 102, 100, list(range(36)), values, 100)
+        payload = stock_delta_frame(
+            series,
+            30,
+            previous_reveal=0.25,
+            reveal=0.5,
+            x_offset=4,
+        )
+        graph = [
+            element
+            for element in payload.elements
+            if element.id.startswith("stocks-graph-")
+        ]
+        self.assertEqual(len(payload.elements), 12)
+        self.assertEqual(len(graph), 9)
+        self.assertNotIn(
+            "stocks-background", {element.id for element in payload.elements}
+        )
 
     @patch("busybar.stocks.fetch_symbol")
     def test_refresh_keeps_cached_data_when_yahoo_throttles(

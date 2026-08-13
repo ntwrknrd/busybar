@@ -42,7 +42,7 @@ DEFAULT_ROTATE_SECONDS = 10
 GRAPH_Y = 8
 GRAPH_HEIGHT = 8
 GRAPH_POINTS = 36
-ANIMATION_FPS = 8
+ANIMATION_FPS = 12
 ANIMATION_SECONDS = 0.75
 YAHOO_URL = "https://query2.finance.yahoo.com/v8/finance/chart/{symbol}"
 
@@ -188,32 +188,16 @@ def format_price(price: float) -> str:
     return f"{price:.2f}"
 
 
-def stock_frame(
-    series: MarketSeries,
-    timeout: int,
-    *,
-    reveal: float = 1,
-    x_offset: int = 0,
-    stale_after: float = DEFAULT_REFRESH_SECONDS * 3,
-) -> types.DisplayElements:
-    change = series.change_percent
-    color = GREEN if change >= 0 else RED
+def stock_color(series: MarketSeries, stale_after: float) -> str:
     if time.time() - series.fetched_at > stale_after:
-        color = STALE
-    segments = graph_segments(series.closes)
-    visible = round(len(segments) * max(0, min(1, reveal)))
-    elements: list[types.DisplayElement] = [
-        types.RectangleElement(
-            id="stocks-background",
-            x=0,
-            y=GRAPH_Y,
-            width=72,
-            height=GRAPH_HEIGHT,
-            fill="solid",
-            fill_colors=[BACKGROUND],
-            border_width=0,
-            timeout=timeout,
-        ),
+        return STALE
+    return GREEN if series.change_percent >= 0 else RED
+
+
+def header_elements(
+    series: MarketSeries, timeout: int, x_offset: int, color: str
+) -> list[types.DisplayElement]:
+    return [
         types.TextElement(
             id="stocks-symbol",
             text=series.symbol[:6],
@@ -234,7 +218,7 @@ def stock_frame(
         ),
         types.TextElement(
             id="stocks-change",
-            text=f"{change:+.1f}%",
+            text=f"{series.change_percent:+.1f}%",
             font="tiny",
             x=51 + x_offset,
             y=0,
@@ -242,20 +226,85 @@ def stock_frame(
             timeout=timeout,
         ),
     ]
+
+
+def graph_element(
+    index: int,
+    segment: tuple[int, int, int],
+    timeout: int,
+    color: str,
+) -> types.RectangleElement:
+    x, y, height = segment
+    return types.RectangleElement(
+        id=f"stocks-graph-{index}",
+        x=x,
+        y=y,
+        width=2,
+        height=height,
+        fill="solid",
+        fill_colors=[color],
+        border_width=0,
+        timeout=timeout,
+    )
+
+
+def stock_frame(
+    series: MarketSeries,
+    timeout: int,
+    *,
+    reveal: float = 1,
+    x_offset: int = 0,
+    stale_after: float = DEFAULT_REFRESH_SECONDS * 3,
+) -> types.DisplayElements:
+    color = stock_color(series, stale_after)
+    segments = graph_segments(series.closes)
+    visible = round(len(segments) * max(0, min(1, reveal)))
+    elements: list[types.DisplayElement] = [
+        types.RectangleElement(
+            id="stocks-background",
+            x=0,
+            y=GRAPH_Y,
+            width=72,
+            height=GRAPH_HEIGHT,
+            fill="solid",
+            fill_colors=[BACKGROUND],
+            border_width=0,
+            timeout=timeout,
+        ),
+    ]
+    elements.extend(header_elements(series, timeout, x_offset, color))
     for index, (x, y, height) in enumerate(segments):
         elements.append(
-            types.RectangleElement(
-                id=f"stocks-graph-{index}",
-                x=x,
-                y=y,
-                width=2,
-                height=height,
-                fill="solid",
-                fill_colors=[color if index < visible else BACKGROUND],
-                border_width=0,
-                timeout=timeout,
+            graph_element(
+                index,
+                (x, y, height),
+                timeout,
+                color if index < visible else BACKGROUND,
             )
         )
+    return types.DisplayElements(
+        application_name=APP_NAME, priority=50, elements=elements
+    )
+
+
+def stock_delta_frame(
+    series: MarketSeries,
+    timeout: int,
+    *,
+    previous_reveal: float,
+    reveal: float,
+    x_offset: int,
+    stale_after: float = DEFAULT_REFRESH_SECONDS * 3,
+) -> types.DisplayElements:
+    color = stock_color(series, stale_after)
+    segments = graph_segments(series.closes)
+    start = round(len(segments) * max(0, min(1, previous_reveal)))
+    end = round(len(segments) * max(0, min(1, reveal)))
+    elements = header_elements(series, timeout, x_offset, color)
+    elements.extend(
+        graph_element(index, segments[index], timeout, color)
+        for index in range(start, end)
+    )
     return types.DisplayElements(
         application_name=APP_NAME, priority=50, elements=elements
     )
@@ -347,6 +396,27 @@ def main(argv: list[str] | None = None) -> None:
         max_workers=1, thread_name_prefix="busybar-probe"
     )
 
+    def draw(payload: types.DisplayElements) -> bool:
+        nonlocal display_suppressed
+        if bar is None:
+            raise RuntimeError("BUSY Bar is not connected")
+        try:
+            bar.display_draw(payload)
+        except Exception as exc:
+            if not display_is_busy(exc):
+                raise
+            if not display_suppressed:
+                print(
+                    "Display is owned by a higher-priority mode; waiting",
+                    file=sys.stderr,
+                )
+            display_suppressed = True
+            return False
+        if display_suppressed:
+            print("Display available; stocks resumed", file=sys.stderr)
+        display_suppressed = False
+        return True
+
     try:
         while not stop_event.is_set():
             if bar is None:
@@ -367,37 +437,57 @@ def main(argv: list[str] | None = None) -> None:
 
             series = market[available[index]]
             steps = 1 if args.once else max(1, round(ANIMATION_FPS * ANIMATION_SECONDS))
-            animation_started = time.monotonic()
             try:
-                for step in range(1, steps + 1):
-                    progress = smoothstep(step / steps)
-                    try:
-                        bar.display_draw(
-                            stock_frame(
+                if args.once:
+                    draw(stock_frame(series, element_timeout))
+                elif draw(
+                    stock_frame(
+                        series,
+                        element_timeout,
+                        reveal=0,
+                        x_offset=12,
+                        stale_after=args.refresh * 3,
+                    )
+                ):
+                    animation_started = time.monotonic()
+                    previous_progress = 0.0
+                    step = 1
+                    while step <= steps and not stop_event.is_set():
+                        deadline = animation_started + step / ANIMATION_FPS
+                        if stop_event.wait(max(0, deadline - time.monotonic())):
+                            break
+                        elapsed_steps = min(
+                            steps,
+                            max(
+                                step,
+                                math.floor(
+                                    (time.monotonic() - animation_started)
+                                    * ANIMATION_FPS
+                                ),
+                            ),
+                        )
+                        progress = smoothstep(elapsed_steps / steps)
+                        if not draw(
+                            stock_delta_frame(
                                 series,
                                 element_timeout,
+                                previous_reveal=previous_progress,
                                 reveal=progress,
                                 x_offset=round(12 * (1 - progress)),
                                 stale_after=args.refresh * 3,
                             )
-                        )
-                    except Exception as exc:
-                        if not display_is_busy(exc):
-                            raise
-                        if not display_suppressed:
-                            print(
-                                "Display is owned by a higher-priority mode; waiting",
-                                file=sys.stderr,
+                        ):
+                            break
+                        previous_progress = progress
+                        step = elapsed_steps + 1
+                    if not stop_event.is_set() and not display_suppressed:
+                        draw(
+                            stock_frame(
+                                series,
+                                element_timeout,
+                                stale_after=args.refresh * 3,
                             )
-                        display_suppressed = True
-                        break
-                    else:
-                        if display_suppressed:
-                            print("Display available; stocks resumed", file=sys.stderr)
-                        display_suppressed = False
-                    deadline = animation_started + step / ANIMATION_FPS
-                    if stop_event.wait(max(0, deadline - time.monotonic())):
-                        break
+                        )
             except Exception as exc:
                 print(
                     f"Lost {candidate.name} connection ({type(exc).__name__}); reconnecting",
