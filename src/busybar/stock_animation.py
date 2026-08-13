@@ -196,7 +196,27 @@ def _vertical_swipe(outgoing: bytes, incoming: bytes, offset: int) -> bytes:
     return bytes(frame)
 
 
-def build_stock_animation(pages: list[StockPage]) -> StockAnimation:
+def _transition_frames(outgoing_page: StockPage, incoming_page: StockPage) -> list[bytes]:
+    outgoing = render_page(outgoing_page)
+    incoming_empty = render_page(incoming_page, 0)
+    frames = [
+        _vertical_swipe(
+            outgoing,
+            incoming_empty,
+            round(HEIGHT * smoothstep(step / SWIPE_FRAMES)),
+        )
+        for step in range(1, SWIPE_FRAMES + 1)
+    ]
+    frames.extend(
+        render_page(incoming_page, smoothstep(step / REVEAL_FRAMES))
+        for step in range(1, REVEAL_FRAMES + 1)
+    )
+    return frames
+
+
+def build_stock_animation(
+    pages: list[StockPage], dwell_seconds: float = 10
+) -> StockAnimation:
     if not pages:
         raise ValueError("stock animation requires at least one page")
     frames: list[bytes] = []
@@ -209,34 +229,17 @@ def build_stock_animation(pages: list[StockPage]) -> StockAnimation:
         sections.append(AnimSection(name, start, len(frames) - 1))
         durations[name] = len(section_frames) / ANIMATION_FPS
 
+    dwell_frames = max(1, round(dwell_seconds * ANIMATION_FPS))
+    cycle_frames: list[bytes] = []
     for index, page in enumerate(pages):
-        add_section(f"show_{index}", [render_page(page)])
-
-    add_section(
-        "initial_0",
-        [
-            render_page(pages[0], smoothstep(step / REVEAL_FRAMES))
-            for step in range(1, REVEAL_FRAMES + 1)
-        ],
-    )
-
-    for index, incoming_page in enumerate(pages):
-        outgoing_page = pages[(index - 1) % len(pages)]
-        outgoing = render_page(outgoing_page)
-        incoming_empty = render_page(incoming_page, 0)
-        section_frames = [
-            _vertical_swipe(
-                outgoing,
-                incoming_empty,
-                round(HEIGHT * smoothstep(step / SWIPE_FRAMES)),
-            )
-            for step in range(1, SWIPE_FRAMES + 1)
-        ]
-        section_frames.extend(
-            render_page(incoming_page, smoothstep(step / REVEAL_FRAMES))
-            for step in range(1, REVEAL_FRAMES + 1)
-        )
-        add_section(f"to_{index}", section_frames)
+        cycle_frames.extend([render_page(page)] * dwell_frames)
+        if len(pages) == 1:
+            continue
+        target = (index + 1) % len(pages)
+        transition = _transition_frames(page, pages[target])
+        cycle_frames.extend(transition)
+        durations[f"to_{target}"] = len(transition) / ANIMATION_FPS
+    add_section("cycle", cycle_frames)
 
     return StockAnimation(
         data=encode_anim(

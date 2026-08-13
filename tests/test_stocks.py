@@ -72,6 +72,10 @@ class StockTests(unittest.TestCase):
         self.assertEqual(element.path, "stocks-a.anim")
         self.assertEqual(element.section, "to_1")
 
+    def test_animation_frame_can_loop_on_device(self) -> None:
+        payload = animation_frame("stocks-a.anim", "cycle", 60, loop=True)
+        self.assertTrue(payload.elements[0].loop)
+
     @patch("busybar.stocks.fetch_symbol")
     def test_refresh_keeps_cached_data_when_yahoo_throttles(
         self, fetch: object

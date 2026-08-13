@@ -61,8 +61,17 @@ def encode_anim(
     sections_size = sum(
         14 + len(section.name.encode("ascii")) for section in all_sections
     )
+    encoded_frames: list[tuple[bytes, int]] = []
+    for frame in frames:
+        if encoded_frames and encoded_frames[-1][0] == frame:
+            previous, duration = encoded_frames[-1]
+            if duration < 255:
+                encoded_frames[-1] = (previous, duration + 1)
+                continue
+        encoded_frames.append((frame, 1))
+
     encoded_frame_size = 4 + frame_size
-    frames_size = encoded_frame_size * len(frames)
+    frames_size = encoded_frame_size * len(encoded_frames)
     header = struct.pack(
         "<8sBBBBBHBIIIII",
         SIGNATURE,
@@ -76,30 +85,42 @@ def encode_anim(
         sections_size,
         frames_size,
         len(all_sections),
-        len(frames),
+        len(encoded_frames),
         len(frames),
     )
     if len(header) != HEADER_SIZE:
         raise AssertionError("invalid animation header size")
 
     section_data = bytearray()
-    frames_offset = HEADER_SIZE + sections_size
+    display_frame_starts: list[tuple[int, int]] = []
+    frame_offset = HEADER_SIZE + sections_size
+    for _frame, duration in encoded_frames:
+        display_frame_starts.extend(
+            (frame_offset, remaining) for remaining in range(duration, 0, -1)
+        )
+        frame_offset += encoded_frame_size
     for section in all_sections:
-        frame_offset = frames_offset + section.start * encoded_frame_size
+        frame_offset, duration_override = display_frame_starts[section.start]
         section_data.extend(
-            struct.pack("<IIIB", section.start, section.end, frame_offset, 1)
+            struct.pack(
+                "<IIIB",
+                section.start,
+                section.end,
+                frame_offset,
+                duration_override,
+            )
         )
         section_data.extend(section.name.encode("ascii"))
         section_data.append(0)
 
     frame_data = bytearray()
-    for rgb in frames:
+    for rgb, duration in encoded_frames:
         bgr = bytearray(frame_size)
         for offset in range(0, frame_size, 3):
             bgr[offset] = rgb[offset + 2]
             bgr[offset + 1] = rgb[offset + 1]
             bgr[offset + 2] = rgb[offset]
-        frame_data.extend(struct.pack("<BBH", 0, 1, frame_size))
+        frame_data.extend(struct.pack("<BBH", 0, duration, frame_size))
         frame_data.extend(bgr)
 
     return bytes(header + section_data + frame_data)

@@ -41,3 +41,18 @@ class AnimationEncoderTests(unittest.TestCase):
                 fps=24,
                 sections=[AnimSection("bad name", 0, 0)],
             )
+
+    def test_folds_identical_frames_into_duration(self) -> None:
+        frame = bytes((1, 2, 3))
+        data = encode_anim(
+            [frame, frame, frame],
+            width=1,
+            height=1,
+            fps=24,
+            sections=[AnimSection("tail", 2, 2)],
+        )
+        header = struct.unpack("<8sBBBBBHBIIIII", data[:HEADER_SIZE])
+        self.assertEqual(header[11:], (1, 3))
+        sections_size = header[8]
+        frame_offset = HEADER_SIZE + sections_size
+        self.assertEqual(data[frame_offset : frame_offset + 2], bytes((0, 3)))

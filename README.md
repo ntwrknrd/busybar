@@ -69,9 +69,10 @@ uv run busybar stocks AAPL MSFT NVDA
 
 Stock symbols rotate every ten seconds. Override the display and market-data
 cadence with `--rotate` and `--refresh`. The CLI renders every stock page into a
-cached animation asset. The BUSY Bar plays a 24 FPS vertical page swipe locally,
-then reveals the incoming chart without an HTTP request for each frame. Quote
-refreshes rebuild the inactive asset slot before switching to it. Failed Yahoo
+cached, continuously looping animation asset. The BUSY Bar plays the 24 FPS
+vertical page swipes and chart reveals locally, without clearing the display or
+making an HTTP request for each frame. Quote refreshes rebuild the inactive
+asset slot before switching to it at a cycle boundary. Failed Yahoo
 refreshes retain the previous asset, use exponential backoff, and mark data
 older than three refresh intervals in yellow.
 

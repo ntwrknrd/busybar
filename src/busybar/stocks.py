@@ -29,7 +29,7 @@ from busybar.device import (
     same_route,
 )
 from busybar.output import status
-from busybar.stock_animation import StockPage, build_stock_animation
+from busybar.stock_animation import StockAnimation, StockPage, build_stock_animation
 
 APP_NAME = "stocks"
 DEFAULT_SYMBOLS = ("AAPL", "MSFT", "NVDA")
@@ -154,7 +154,9 @@ def animation_pages(
     ]
 
 
-def animation_frame(filename: str, section: str, timeout: int) -> types.DisplayElements:
+def animation_frame(
+    filename: str, section: str, timeout: int, *, loop: bool = False
+) -> types.DisplayElements:
     return types.DisplayElements(
         application_name=APP_NAME,
         priority=50,
@@ -163,7 +165,7 @@ def animation_frame(filename: str, section: str, timeout: int) -> types.DisplayE
                 id="stocks-page-animation",
                 path=filename,
                 section=section,
-                loop=False,
+                loop=loop,
                 timeout=timeout,
             )
         ],
@@ -226,12 +228,16 @@ def main(argv: list[str] | None = None) -> None:
         )
 
     stale_after = args.refresh * 3
-    animation = build_stock_animation(animation_pages(market, available, stale_after))
+    animation = build_stock_animation(
+        animation_pages(market, available, stale_after), args.rotate
+    )
     asset_slot = 0
     asset_filename = ASSET_FILENAMES[asset_slot]
-    element_timeout = max(15, math.ceil(args.rotate * 3))
+    element_timeout = max(45, math.ceil(animation.section_seconds["cycle"] * 2))
     if args.dry_run:
-        payload = animation_frame(asset_filename, "initial_0", element_timeout)
+        payload = animation_frame(
+            asset_filename, "cycle", element_timeout, loop=True
+        )
         print(json.dumps(payload.model_dump(mode="json", exclude_none=True), indent=2))
         print(
             f"animation_asset_bytes={len(animation.data)} sections={len(animation.section_seconds)}",
@@ -251,7 +257,6 @@ def main(argv: list[str] | None = None) -> None:
     bar: BusyBar | None = None
     candidate: Candidate | None = None
     asset_uploaded = False
-    started = False
     reconnect_attempt = 0
     display_suppressed = False
     refresh_failures = 0
@@ -259,6 +264,9 @@ def main(argv: list[str] | None = None) -> None:
     next_probe = 0.0
     refresh_future: Future[tuple[dict[str, MarketSeries], list[str]]] | None = None
     probe_future: Future[tuple[BusyBar, Candidate]] | None = None
+    pending_update: tuple[
+        dict[str, MarketSeries], list[str], StockAnimation, int, str
+    ] | None = None
     refresh_executor = ThreadPoolExecutor(
         max_workers=1, thread_name_prefix="stocks-data"
     )
@@ -266,13 +274,11 @@ def main(argv: list[str] | None = None) -> None:
         max_workers=1, thread_name_prefix="busybar-probe"
     )
 
-    def draw(payload: types.DisplayElements, *, restart: bool = False) -> bool:
+    def draw(payload: types.DisplayElements) -> bool:
         nonlocal display_suppressed
         if bar is None:
             raise RuntimeError("BUSY Bar is not connected")
         try:
-            if restart:
-                bar.display_clear(application_name=APP_NAME)
             bar.display_draw(payload)
         except Exception as exc:
             if not display_is_busy(exc):
@@ -289,13 +295,12 @@ def main(argv: list[str] | None = None) -> None:
         display_suppressed = False
         return True
 
-    def play(section: str) -> bool:
-        if not draw(
-            animation_frame(asset_filename, section, element_timeout), restart=True
-        ):
-            return False
-        stop_event.wait(animation.section_seconds[section])
-        return True
+    def start_animation() -> bool:
+        return draw(
+            animation_frame(
+                asset_filename, "cycle", element_timeout, loop=True
+            )
+        )
 
     def disconnect(exc: Exception) -> None:
         nonlocal bar, candidate, display_suppressed
@@ -335,8 +340,7 @@ def main(argv: list[str] | None = None) -> None:
                 reconnect_attempt = 0
                 next_probe = time.monotonic() + BETTER_CONNECTION_POLL_SECONDS
                 try:
-                    play("initial_0" if not started else f"show_{index}")
-                    started = True
+                    start_animation()
                 except Exception as exc:
                     disconnect(exc)
                     continue
@@ -353,7 +357,8 @@ def main(argv: list[str] | None = None) -> None:
                         symbol for symbol in symbols if symbol in refreshed
                     ]
                     refreshed_animation = build_stock_animation(
-                        animation_pages(refreshed, refreshed_available, stale_after)
+                        animation_pages(refreshed, refreshed_available, stale_after),
+                        args.rotate,
                     )
                     refreshed_slot = 1 - asset_slot
                     refreshed_filename = ASSET_FILENAMES[refreshed_slot]
@@ -370,28 +375,13 @@ def main(argv: list[str] | None = None) -> None:
                         )
                         next_refresh = time.monotonic() + args.refresh
                     else:
-                        current_symbol = available[index]
-                        market = refreshed
-                        available = refreshed_available
-                        index = (
-                            available.index(current_symbol)
-                            if current_symbol in available
-                            else 0
+                        pending_update = (
+                            refreshed,
+                            refreshed_available,
+                            refreshed_animation,
+                            refreshed_slot,
+                            refreshed_filename,
                         )
-                        animation = refreshed_animation
-                        asset_slot = refreshed_slot
-                        asset_filename = refreshed_filename
-                        try:
-                            draw(
-                                animation_frame(
-                                    asset_filename,
-                                    f"show_{index}",
-                                    element_timeout,
-                                )
-                            )
-                        except Exception as exc:
-                            disconnect(exc)
-                            break
                     if refresh_errors:
                         refresh_failures += 1
                         delay = min(300, args.refresh * (2 ** min(refresh_failures, 3)))
@@ -420,17 +410,6 @@ def main(argv: list[str] | None = None) -> None:
                             bar = probe_bar
                             candidate = probe_candidate
                             old_bar.close()
-                            try:
-                                draw(
-                                    animation_frame(
-                                        asset_filename,
-                                        f"show_{index}",
-                                        element_timeout,
-                                    )
-                                )
-                            except Exception as exc:
-                                disconnect(exc)
-                                break
                             status(
                                 f"Switched to {candidate.name}",
                                 timestamp=args.verbose,
@@ -460,7 +439,22 @@ def main(argv: list[str] | None = None) -> None:
             try:
                 if args.verbose:
                     status(f"Showing {available[target]}", timestamp=True)
-                play(f"to_{target}")
+                stop_event.wait(animation.section_seconds[f"to_{target}"])
+                if target == 0:
+                    if pending_update is not None:
+                        (
+                            market,
+                            available,
+                            animation,
+                            asset_slot,
+                            asset_filename,
+                        ) = pending_update
+                        pending_update = None
+                        element_timeout = max(
+                            45,
+                            math.ceil(animation.section_seconds["cycle"] * 2),
+                        )
+                    start_animation()
             except Exception as exc:
                 disconnect(exc)
                 continue
