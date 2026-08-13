@@ -13,14 +13,12 @@ import urllib.parse
 import urllib.request
 from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import asdict, dataclass
-from itertools import pairwise
 from pathlib import Path
 from threading import Event
 from typing import Any
 
 from busylib import BusyBar, types
 
-from busybar.animation import smoothstep
 from busybar.device import (
     BETTER_CONNECTION_POLL_SECONDS,
     Candidate,
@@ -30,23 +28,14 @@ from busybar.device import (
     resolve,
     same_route,
 )
+from busybar.stock_animation import StockPage, build_stock_animation
 
 APP_NAME = "stocks"
-BACKGROUND = "#101722FF"
-GREEN = "#32D17CFF"
-RED = "#FF5964FF"
-STALE = "#FFD43BFF"
 DEFAULT_SYMBOLS = ("AAPL", "MSFT", "NVDA")
 DEFAULT_REFRESH_SECONDS = 60
 DEFAULT_ROTATE_SECONDS = 10
-GRAPH_X = 22
-GRAPH_Y = 0
-GRAPH_WIDTH = 50
-GRAPH_HEIGHT = 16
-GRAPH_POINTS = 36
-ANIMATION_FPS = 12
-ANIMATION_SECONDS = 0.75
 YAHOO_URL = "https://query2.finance.yahoo.com/v8/finance/chart/{symbol}"
+ASSET_FILENAMES = ("stocks-a.anim", "stocks-b.anim")
 
 
 @dataclass(frozen=True)
@@ -149,151 +138,34 @@ def refresh_series(
     return updated, failures
 
 
-def sample_values(values: list[float], count: int = GRAPH_POINTS) -> list[float]:
-    if len(values) <= count:
-        return values
+def animation_pages(
+    market: dict[str, MarketSeries], symbols: list[str], stale_after: float
+) -> list[StockPage]:
+    now = time.time()
     return [
-        values[round(index * (len(values) - 1) / (count - 1))] for index in range(count)
-    ]
-
-
-def graph_segments(values: list[float]) -> list[tuple[int, int, int]]:
-    sampled = sample_values(values)
-    if len(sampled) < 2:
-        return []
-    low, high = min(sampled), max(sampled)
-    spread = high - low
-
-    def ordinate(value: float) -> int:
-        if spread == 0:
-            return GRAPH_Y + GRAPH_HEIGHT // 2
-        return (
-            GRAPH_Y
-            + GRAPH_HEIGHT
-            - 1
-            - round((value - low) / spread * (GRAPH_HEIGHT - 1))
+        StockPage(
+            symbol=market[symbol].symbol,
+            change_percent=market[symbol].change_percent,
+            closes=market[symbol].closes,
+            stale=now - market[symbol].fetched_at > stale_after,
         )
-
-    ordinates = [ordinate(value) for value in sampled]
-    horizontal_range = GRAPH_WIDTH - 2
-    horizontal_steps = max(1, len(ordinates) - 2)
-    return [
-        (
-            GRAPH_X + round(index * horizontal_range / horizontal_steps),
-            min(left, right),
-            abs(right - left) + 1,
-        )
-        for index, (left, right) in enumerate(pairwise(ordinates))
+        for symbol in symbols
     ]
 
 
-def stock_color(series: MarketSeries, stale_after: float) -> str:
-    if time.time() - series.fetched_at > stale_after:
-        return STALE
-    return GREEN if series.change_percent >= 0 else RED
-
-
-def header_elements(
-    series: MarketSeries, timeout: int, color: str
-) -> list[types.DisplayElement]:
-    return [
-        types.TextElement(
-            id="stocks-symbol",
-            text=series.symbol[:6],
-            font="tiny",
-            x=0,
-            y=0,
-            color="#FFFFFFFF",
-            timeout=timeout,
-        ),
-        types.TextElement(
-            id="stocks-change",
-            text=f"{series.change_percent:+.1f}%",
-            font="tiny",
-            x=0,
-            y=9,
-            color=color,
-            timeout=timeout,
-        ),
-    ]
-
-
-def graph_element(
-    index: int,
-    segment: tuple[int, int, int],
-    timeout: int,
-    color: str,
-) -> types.RectangleElement:
-    x, y, height = segment
-    return types.RectangleElement(
-        id=f"stocks-graph-{index}",
-        x=x,
-        y=y,
-        width=2,
-        height=height,
-        fill="solid",
-        fill_colors=[color],
-        border_width=0,
-        timeout=timeout,
-    )
-
-
-def stock_frame(
-    series: MarketSeries,
-    timeout: int,
-    *,
-    reveal: float = 1,
-    stale_after: float = DEFAULT_REFRESH_SECONDS * 3,
-) -> types.DisplayElements:
-    color = stock_color(series, stale_after)
-    segments = graph_segments(series.closes)
-    visible = round(len(segments) * max(0, min(1, reveal)))
-    elements: list[types.DisplayElement] = [
-        types.RectangleElement(
-            id="stocks-background",
-            x=GRAPH_X,
-            y=GRAPH_Y,
-            width=GRAPH_WIDTH,
-            height=GRAPH_HEIGHT,
-            fill="solid",
-            fill_colors=[BACKGROUND],
-            border_width=0,
-            timeout=timeout,
-        ),
-    ]
-    elements.extend(header_elements(series, timeout, color))
-    for index, (x, y, height) in enumerate(segments):
-        elements.append(
-            graph_element(
-                index,
-                (x, y, height),
-                timeout,
-                color if index < visible else BACKGROUND,
+def animation_frame(filename: str, section: str, timeout: int) -> types.DisplayElements:
+    return types.DisplayElements(
+        application_name=APP_NAME,
+        priority=50,
+        elements=[
+            types.AnimationElement(
+                id="stocks-page-animation",
+                path=filename,
+                section=section,
+                loop=False,
+                timeout=timeout,
             )
-        )
-    return types.DisplayElements(
-        application_name=APP_NAME, priority=50, elements=elements
-    )
-
-
-def stock_delta_frame(
-    series: MarketSeries,
-    timeout: int,
-    *,
-    previous_reveal: float,
-    reveal: float,
-    stale_after: float = DEFAULT_REFRESH_SECONDS * 3,
-) -> types.DisplayElements:
-    color = stock_color(series, stale_after)
-    segments = graph_segments(series.closes)
-    start = round(len(segments) * max(0, min(1, previous_reveal)))
-    end = round(len(segments) * max(0, min(1, reveal)))
-    elements = [
-        graph_element(index, segments[index], timeout, color)
-        for index in range(start, end)
-    ]
-    return types.DisplayElements(
-        application_name=APP_NAME, priority=50, elements=elements
+        ],
     )
 
 
@@ -352,10 +224,18 @@ def main(argv: list[str] | None = None) -> None:
             file=sys.stderr,
         )
 
+    stale_after = args.refresh * 3
+    animation = build_stock_animation(animation_pages(market, available, stale_after))
+    asset_slot = 0
+    asset_filename = ASSET_FILENAMES[asset_slot]
     element_timeout = max(15, math.ceil(args.rotate * 3))
     if args.dry_run:
-        payload = stock_frame(market[available[0]], element_timeout)
+        payload = animation_frame(asset_filename, "initial_0", element_timeout)
         print(json.dumps(payload.model_dump(mode="json", exclude_none=True), indent=2))
+        print(
+            f"animation_asset_bytes={len(animation.data)} sections={len(animation.section_seconds)}",
+            file=sys.stderr,
+        )
         return
 
     stop_event = Event()
@@ -369,6 +249,8 @@ def main(argv: list[str] | None = None) -> None:
     index = 0
     bar: BusyBar | None = None
     candidate: Candidate | None = None
+    asset_uploaded = False
+    started = False
     reconnect_attempt = 0
     display_suppressed = False
     refresh_failures = 0
@@ -404,12 +286,38 @@ def main(argv: list[str] | None = None) -> None:
         display_suppressed = False
         return True
 
+    def play(section: str) -> bool:
+        if not draw(animation_frame(asset_filename, section, element_timeout)):
+            return False
+        stop_event.wait(animation.section_seconds[section])
+        return True
+
+    def disconnect(exc: Exception) -> None:
+        nonlocal bar, candidate, display_suppressed
+        route = candidate.name if candidate is not None else "BUSY Bar"
+        print(
+            f"Lost {route} connection ({type(exc).__name__}); reconnecting",
+            file=sys.stderr,
+        )
+        if bar is not None:
+            bar.close()
+        bar = None
+        candidate = None
+        display_suppressed = False
+
     try:
         while not stop_event.is_set():
             if bar is None:
                 try:
                     bar, candidate = resolve()
+                    if not asset_uploaded:
+                        bar.assets_upload(APP_NAME, asset_filename, animation.data)
+                        asset_uploaded = True
                 except Exception as exc:
+                    if bar is not None:
+                        bar.close()
+                    bar = None
+                    candidate = None
                     delay = reconnect_delay(reconnect_attempt)
                     reconnect_attempt += 1
                     print(
@@ -421,68 +329,12 @@ def main(argv: list[str] | None = None) -> None:
                 print(f"Connected via {candidate.name}", file=sys.stderr)
                 reconnect_attempt = 0
                 next_probe = time.monotonic() + BETTER_CONNECTION_POLL_SECONDS
-
-            series = market[available[index]]
-            steps = 1 if args.once else max(1, round(ANIMATION_FPS * ANIMATION_SECONDS))
-            try:
-                if args.once:
-                    draw(stock_frame(series, element_timeout))
-                elif draw(
-                    stock_frame(
-                        series,
-                        element_timeout,
-                        reveal=0,
-                        stale_after=args.refresh * 3,
-                    )
-                ):
-                    animation_started = time.monotonic()
-                    previous_progress = 0.0
-                    step = 1
-                    while step <= steps and not stop_event.is_set():
-                        deadline = animation_started + step / ANIMATION_FPS
-                        if stop_event.wait(max(0, deadline - time.monotonic())):
-                            break
-                        elapsed_steps = min(
-                            steps,
-                            max(
-                                step,
-                                math.floor(
-                                    (time.monotonic() - animation_started)
-                                    * ANIMATION_FPS
-                                ),
-                            ),
-                        )
-                        progress = smoothstep(elapsed_steps / steps)
-                        if not draw(
-                            stock_delta_frame(
-                                series,
-                                element_timeout,
-                                previous_reveal=previous_progress,
-                                reveal=progress,
-                                stale_after=args.refresh * 3,
-                            )
-                        ):
-                            break
-                        previous_progress = progress
-                        step = elapsed_steps + 1
-                    if not stop_event.is_set() and not display_suppressed:
-                        draw(
-                            stock_frame(
-                                series,
-                                element_timeout,
-                                stale_after=args.refresh * 3,
-                            )
-                        )
-            except Exception as exc:
-                print(
-                    f"Lost {candidate.name} connection ({type(exc).__name__}); reconnecting",
-                    file=sys.stderr,
-                )
-                bar.close()
-                bar = None
-                candidate = None
-                display_suppressed = False
-                continue
+                try:
+                    play("initial_0" if not started else f"show_{index}")
+                    started = True
+                except Exception as exc:
+                    disconnect(exc)
+                    continue
 
             if args.once:
                 break
@@ -491,9 +343,50 @@ def main(argv: list[str] | None = None) -> None:
             while not stop_event.is_set() and time.monotonic() < wait_until:
                 if refresh_future is not None and refresh_future.done():
                     refreshed, refresh_errors = refresh_future.result()
-                    market = refreshed
-                    available = [symbol for symbol in symbols if symbol in market]
                     refresh_future = None
+                    refreshed_available = [
+                        symbol for symbol in symbols if symbol in refreshed
+                    ]
+                    refreshed_animation = build_stock_animation(
+                        animation_pages(refreshed, refreshed_available, stale_after)
+                    )
+                    refreshed_slot = 1 - asset_slot
+                    refreshed_filename = ASSET_FILENAMES[refreshed_slot]
+                    try:
+                        bar.assets_upload(
+                            APP_NAME,
+                            refreshed_filename,
+                            refreshed_animation.data,
+                        )
+                    except Exception as exc:
+                        print(
+                            f"Animation asset refresh failed ({type(exc).__name__}); keeping previous data",
+                            file=sys.stderr,
+                        )
+                        next_refresh = time.monotonic() + args.refresh
+                    else:
+                        current_symbol = available[index]
+                        market = refreshed
+                        available = refreshed_available
+                        index = (
+                            available.index(current_symbol)
+                            if current_symbol in available
+                            else 0
+                        )
+                        animation = refreshed_animation
+                        asset_slot = refreshed_slot
+                        asset_filename = refreshed_filename
+                        try:
+                            draw(
+                                animation_frame(
+                                    asset_filename,
+                                    f"show_{index}",
+                                    element_timeout,
+                                )
+                            )
+                        except Exception as exc:
+                            disconnect(exc)
+                            break
                     if refresh_errors:
                         refresh_failures += 1
                         delay = min(300, args.refresh * (2 ** min(refresh_failures, 3)))
@@ -522,6 +415,17 @@ def main(argv: list[str] | None = None) -> None:
                             bar = probe_bar
                             candidate = probe_candidate
                             old_bar.close()
+                            try:
+                                draw(
+                                    animation_frame(
+                                        asset_filename,
+                                        f"show_{index}",
+                                        element_timeout,
+                                    )
+                                )
+                            except Exception as exc:
+                                disconnect(exc)
+                                break
                             print(f"Switched to {candidate.name}", file=sys.stderr)
                         else:
                             probe_bar.close()
@@ -538,7 +442,19 @@ def main(argv: list[str] | None = None) -> None:
                     next_probe = now + BETTER_CONNECTION_POLL_SECONDS
                 stop_event.wait(min(0.25, max(0, wait_until - now)))
 
-            index = (index + 1) % len(available)
+            if stop_event.is_set():
+                break
+            if bar is None:
+                continue
+            if len(available) == 1:
+                continue
+            target = (index + 1) % len(available)
+            try:
+                play(f"to_{target}")
+            except Exception as exc:
+                disconnect(exc)
+                continue
+            index = target
     finally:
         probe_executor.shutdown(wait=True, cancel_futures=True)
         refresh_executor.shutdown(wait=True, cancel_futures=True)

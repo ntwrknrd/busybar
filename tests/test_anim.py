@@ -1,0 +1,43 @@
+import struct
+import unittest
+
+from busybar.anim import HEADER_SIZE, SIGNATURE, AnimSection, encode_anim
+
+
+class AnimationEncoderTests(unittest.TestCase):
+    def test_encodes_bicycle_header_sections_and_bgr_frame(self) -> None:
+        data = encode_anim(
+            [bytes((1, 2, 3, 4, 5, 6))],
+            width=2,
+            height=1,
+            fps=24,
+            sections=[AnimSection("show", 0, 0)],
+        )
+        header = struct.unpack("<8sBBBBBHBIIIII", data[:HEADER_SIZE])
+        self.assertEqual(header[0], SIGNATURE)
+        self.assertEqual(header[2:6], (2, 1, 0, 24))
+        self.assertEqual(header[6], 6)
+        self.assertEqual(header[10:], (2, 1, 1))
+        self.assertIn(b"default\0", data)
+        self.assertIn(b"show\0", data)
+        self.assertTrue(data.endswith(bytes((3, 2, 1, 6, 5, 4))))
+
+    def test_rejects_invalid_frames_and_sections(self) -> None:
+        with self.assertRaises(ValueError):
+            encode_anim([], width=72, height=16, fps=24, sections=[])
+        with self.assertRaises(ValueError):
+            encode_anim(
+                [b"short"],
+                width=72,
+                height=16,
+                fps=24,
+                sections=[],
+            )
+        with self.assertRaises(ValueError):
+            encode_anim(
+                [bytes(3)],
+                width=1,
+                height=1,
+                fps=24,
+                sections=[AnimSection("bad name", 0, 0)],
+            )
