@@ -221,14 +221,13 @@ def main() -> None:
                     break
                 progress = step / steps
                 bar.display_draw(
-                    dynamic_frame(
+                    frame(
                         interpolate(cpu, target_cpu, progress),
                         interpolate(memory, target_memory, progress),
                         element_timeout,
                     )
                 )
                 time.sleep(1 / ANIMATION_FPS)
-            bar.display_draw(static_frame(element_timeout))
             cpu, memory = target_cpu, target_memory
     finally:
         try:

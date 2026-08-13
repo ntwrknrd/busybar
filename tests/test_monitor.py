@@ -61,6 +61,22 @@ class MonitorTests(unittest.TestCase):
         payload = frame(20, 40, timeout=7)
         self.assertTrue(all(element.timeout == 7 for element in payload.elements))
 
+    def test_each_frame_is_complete(self) -> None:
+        payload = frame(20, 40)
+        self.assertEqual(
+            {element.id for element in payload.elements},
+            {
+                "cpu-label",
+                "cpu-background",
+                "cpu-value",
+                "cpu-percent",
+                "ram-label",
+                "ram-background",
+                "ram-value",
+                "ram-percent",
+            },
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
