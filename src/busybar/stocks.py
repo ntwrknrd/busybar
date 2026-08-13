@@ -265,11 +265,13 @@ def main(argv: list[str] | None = None) -> None:
         max_workers=1, thread_name_prefix="busybar-probe"
     )
 
-    def draw(payload: types.DisplayElements) -> bool:
+    def draw(payload: types.DisplayElements, *, restart: bool = False) -> bool:
         nonlocal display_suppressed
         if bar is None:
             raise RuntimeError("BUSY Bar is not connected")
         try:
+            if restart:
+                bar.display_clear(application_name=APP_NAME)
             bar.display_draw(payload)
         except Exception as exc:
             if not display_is_busy(exc):
@@ -287,7 +289,9 @@ def main(argv: list[str] | None = None) -> None:
         return True
 
     def play(section: str) -> bool:
-        if not draw(animation_frame(asset_filename, section, element_timeout)):
+        if not draw(
+            animation_frame(asset_filename, section, element_timeout), restart=True
+        ):
             return False
         stop_event.wait(animation.section_seconds[section])
         return True
@@ -450,6 +454,8 @@ def main(argv: list[str] | None = None) -> None:
                 continue
             target = (index + 1) % len(available)
             try:
+                if args.verbose:
+                    print(f"Showing {available[target]}", file=sys.stderr)
                 play(f"to_{target}")
             except Exception as exc:
                 disconnect(exc)
