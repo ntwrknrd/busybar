@@ -2,6 +2,9 @@
 
 Displays live CPU and memory utilization from macOS on a Flipper BUSY Bar.
 Values animate smoothly in place without clearing the display between samples.
+The monitor removes only its own display elements when it exits. Elements also
+expire automatically if the process crashes, allowing the Bar to return to its
+previous mode without a global display reset.
 
 ## Setup
 

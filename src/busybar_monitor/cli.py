@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import signal
 import sys
@@ -92,9 +93,13 @@ def color_for(percent: float) -> str:
     return "#32D17CFF"
 
 
-def static_bar_elements(label: str, y: int, prefix: str) -> list[types.DisplayElement]:
+def static_bar_elements(
+    label: str, y: int, prefix: str, timeout: int | None = None
+) -> list[types.DisplayElement]:
     return [
-        types.TextElement(id=f"{prefix}-label", text=label, font="tiny", x=0, y=y),
+        types.TextElement(
+            id=f"{prefix}-label", text=label, font="tiny", x=0, y=y, timeout=timeout
+        ),
         types.RectangleElement(
             id=f"{prefix}-background",
             x=17,
@@ -104,11 +109,14 @@ def static_bar_elements(label: str, y: int, prefix: str) -> list[types.DisplayEl
             fill="solid",
             fill_colors=["#202838FF"],
             border_width=0,
+            timeout=timeout,
         ),
     ]
 
 
-def dynamic_bar_elements(percent: float, y: int, prefix: str) -> list[types.DisplayElement]:
+def dynamic_bar_elements(
+    percent: float, y: int, prefix: str, timeout: int | None = None
+) -> list[types.DisplayElement]:
     value = max(0.0, min(100.0, percent))
     width = max(1, round(36 * value / 100))
     return [
@@ -121,6 +129,7 @@ def dynamic_bar_elements(percent: float, y: int, prefix: str) -> list[types.Disp
             fill="solid",
             fill_colors=[color_for(value)],
             border_width=0,
+            timeout=timeout,
         ),
         types.TextElement(
             id=f"{prefix}-percent",
@@ -129,24 +138,29 @@ def dynamic_bar_elements(percent: float, y: int, prefix: str) -> list[types.Disp
             x=55,
             y=y,
             color=color_for(value),
+            timeout=timeout,
         ),
     ]
 
 
-def static_frame() -> types.DisplayElements:
-    elements = static_bar_elements("CPU", 1, "cpu")
-    elements.extend(static_bar_elements("RAM", 9, "ram"))
+def static_frame(timeout: int | None = None) -> types.DisplayElements:
+    elements = static_bar_elements("CPU", 1, "cpu", timeout)
+    elements.extend(static_bar_elements("RAM", 9, "ram", timeout))
     return types.DisplayElements(application_name=APP_NAME, priority=50, elements=elements)
 
 
-def dynamic_frame(cpu: float, memory: float) -> types.DisplayElements:
-    elements = dynamic_bar_elements(cpu, 1, "cpu")
-    elements.extend(dynamic_bar_elements(memory, 9, "ram"))
+def dynamic_frame(
+    cpu: float, memory: float, timeout: int | None = None
+) -> types.DisplayElements:
+    elements = dynamic_bar_elements(cpu, 1, "cpu", timeout)
+    elements.extend(dynamic_bar_elements(memory, 9, "ram", timeout))
     return types.DisplayElements(application_name=APP_NAME, priority=50, elements=elements)
 
 
-def frame(cpu: float, memory: float) -> types.DisplayElements:
-    elements = static_frame().elements + dynamic_frame(cpu, memory).elements
+def frame(
+    cpu: float, memory: float, timeout: int | None = None
+) -> types.DisplayElements:
+    elements = static_frame(timeout).elements + dynamic_frame(cpu, memory, timeout).elements
     return types.DisplayElements(application_name=APP_NAME, priority=50, elements=elements)
 
 
@@ -193,9 +207,10 @@ def main() -> None:
 
     cpu = psutil.cpu_percent(interval=None)
     memory = psutil.virtual_memory().percent
+    element_timeout = max(5, math.ceil(args.interval * 3))
 
     try:
-        bar.display_draw(frame(cpu, memory), clear_before_draw=True)
+        bar.display_draw(frame(cpu, memory, element_timeout))
         while not stopping and not args.once:
             time.sleep(args.interval)
             target_cpu = psutil.cpu_percent(interval=None)
@@ -209,9 +224,14 @@ def main() -> None:
                     dynamic_frame(
                         interpolate(cpu, target_cpu, progress),
                         interpolate(memory, target_memory, progress),
+                        element_timeout,
                     )
                 )
                 time.sleep(1 / ANIMATION_FPS)
+            bar.display_draw(static_frame(element_timeout))
             cpu, memory = target_cpu, target_memory
     finally:
-        bar.close()
+        try:
+            bar.display_clear(application_name=APP_NAME)
+        finally:
+            bar.close()

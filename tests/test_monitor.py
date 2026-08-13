@@ -57,6 +57,10 @@ class MonitorTests(unittest.TestCase):
         self.assertEqual(interpolate(20, 80, 0.5), 50)
         self.assertEqual(interpolate(20, 80, 1), 80)
 
+    def test_elements_can_expire_after_a_crash(self) -> None:
+        payload = frame(20, 40, timeout=7)
+        self.assertTrue(all(element.timeout == 7 for element in payload.elements))
+
 
 if __name__ == "__main__":
     unittest.main()
