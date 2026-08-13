@@ -1,7 +1,11 @@
-# BUSY Bar macOS system monitor
+# BUSY Bar applications
 
-Displays live CPU, memory, CPU temperature, and ping latency from macOS on a
-Flipper BUSY Bar. The two dashboard pages rotate every five seconds with a
+The `busybar` CLI runs separate applications on a Flipper BUSY Bar:
+
+- `busybar system` displays live CPU, memory, CPU temperature, and ping latency.
+- `busybar stocks` rotates through intraday stock prices and charts.
+
+The system application's two dashboard pages rotate every five seconds with a
 horizontal slide transition.
 Transitions use latency-aware frame pacing and eased motion to remain smooth
 over Wi-Fi without delaying each frame by the API round-trip time.
@@ -14,7 +18,7 @@ previous mode without a global display reset.
 
 ## Setup
 
-The monitor reads these environment variables:
+Both applications read these environment variables:
 
 - `BUSYBAR_SERIAL_NUMBER`: required; prevents drawing to the wrong device.
 - `BUSYBAR_LAN_TOKEN`: password for the local Wi-Fi HTTP API.
@@ -35,23 +39,38 @@ brew install macmon
 
 Ping targets `1.1.1.1` by default. Override it with `BUSYBAR_PING_TARGET`.
 
+The stock application defaults to `AAPL`, `MSFT`, and `NVDA`. Set a persistent
+default with a space-separated `BUSYBAR_STOCK_SYMBOLS` value or pass symbols on
+the command line. It uses Yahoo Finance's unofficial chart endpoint without an
+account or API key. Quotes refresh once per minute and are cached under
+`~/Library/Caches/busybar/`, so temporary throttling or outages retain the last
+successful chart.
+
 Preview the generated display payload without contacting the device:
 
 ```sh
-uv run busybar-monitor --dry-run
+uv run busybar system --dry-run
+uv run busybar stocks AAPL MSFT --dry-run
 ```
 
 Draw once:
 
 ```sh
-uv run busybar-monitor --once
+uv run busybar system --once
+uv run busybar stocks AAPL --once
 ```
 
 Run continuously with a two-second refresh interval:
 
 ```sh
-uv run busybar-monitor
+uv run busybar system
+uv run busybar stocks AAPL MSFT NVDA
 ```
+
+Stock symbols rotate every ten seconds. Override the display and market-data
+cadence with `--rotate` and `--refresh`. The graph reveals from left to right as
+each new symbol slides into place. Failed Yahoo refreshes use exponential
+backoff and mark data older than three refresh intervals in yellow.
 
 The connection order is mDNS discovery, USB at `10.0.4.20`, the configured
 home LAN address, then BUSY Cloud. Every candidate must report the configured

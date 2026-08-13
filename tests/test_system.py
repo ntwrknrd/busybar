@@ -4,40 +4,44 @@ from unittest.mock import patch
 
 from busylib import exceptions
 
-from busybar_monitor.cli import (
+from busybar.animation import smoothstep
+from busybar.device import (
     USB_ADDRESS,
     candidates,
-    color_for,
-    dynamic_frame,
     display_is_busy,
-    frame,
-    interpolate,
     is_better,
     reconnect_delay,
     same_route,
+)
+from busybar.system import (
     SecondaryMetrics,
+    color_for,
+    dynamic_frame,
+    frame,
+    interpolate,
+    ping_color,
     secondary_frame,
     static_frame,
-    smoothstep,
     temperature_color,
-    ping_color,
     transition_frame,
 )
 
 
 def candidates_without_discovery():
-    with patch("busybar_monitor.cli.BusyBarDevices.discover", return_value=[]):
-        with patch.dict(os.environ, {}, clear=True):
-            return list(candidates())
+    with (
+        patch("busybar.device.BusyBarDevices.discover", return_value=[]),
+        patch.dict(os.environ, {}, clear=True),
+    ):
+        return list(candidates())
 
 
-class MonitorTests(unittest.TestCase):
+class SystemTests(unittest.TestCase):
     def test_threshold_colors(self) -> None:
         self.assertEqual(color_for(64), "#32D17CFF")
         self.assertEqual(color_for(65), "#FFD43BFF")
         self.assertEqual(color_for(85), "#FF3030FF")
 
-    @patch("busybar_monitor.cli.BusyBarDevices.discover", return_value=[])
+    @patch("busybar.device.BusyBarDevices.discover", return_value=[])
     def test_fallback_order(self, _discover: object) -> None:
         environment = {
             "BUSYBAR_LAN_TOKEN": "lan-secret",
@@ -76,8 +80,12 @@ class MonitorTests(unittest.TestCase):
 
     def test_frame_clamps_percentages(self) -> None:
         payload = frame(-4, 140)
-        cpu_bar = next(element for element in payload.elements if element.id == "cpu-value")
-        ram_bar = next(element for element in payload.elements if element.id == "ram-value")
+        cpu_bar = next(
+            element for element in payload.elements if element.id == "cpu-value"
+        )
+        ram_bar = next(
+            element for element in payload.elements if element.id == "ram-value"
+        )
         self.assertEqual(cpu_bar.width, 1)
         self.assertEqual(ram_bar.width, 36)
 
@@ -123,7 +131,9 @@ class MonitorTests(unittest.TestCase):
 
     def test_secondary_page_formats_temperature_and_ping(self) -> None:
         payload = secondary_frame(SecondaryMetrics(67.4, 12.2))
-        values = {element.id: getattr(element, "text", None) for element in payload.elements}
+        values = {
+            element.id: getattr(element, "text", None) for element in payload.elements
+        }
         self.assertEqual(values["temp-percent"], "67C")
         self.assertEqual(values["ping-percent"], "12ms")
         self.assertEqual(temperature_color(70), "#FFD43BFF")
