@@ -3,6 +3,7 @@ import unittest
 from busybar.anim import SIGNATURE
 from busybar.stock_animation import (
     ANIMATION_FPS,
+    FONT,
     HEIGHT,
     REVEAL_FRAMES,
     SWIPE_FRAMES,
@@ -15,6 +16,12 @@ from busybar.stock_animation import (
 
 
 class StockAnimationTests(unittest.TestCase):
+    def test_percent_glyph_has_distinct_dots_and_slash(self) -> None:
+        self.assertEqual(
+            FONT["%"],
+            ("11001", "11010", "00100", "01011", "10011"),
+        )
+
     def test_renders_complete_rgb_page(self) -> None:
         page = StockPage("AAPL", -0.4, [100, 99, 101])
         empty = render_page(page, 0)
