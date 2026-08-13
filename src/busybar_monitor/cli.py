@@ -8,6 +8,7 @@ import os
 import signal
 import sys
 import time
+from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass
 from threading import Event
 from typing import Iterator
@@ -204,6 +205,9 @@ def parser() -> argparse.ArgumentParser:
     result.add_argument("--interval", type=float, default=2.0, help="refresh interval in seconds")
     result.add_argument("--once", action="store_true", help="draw one frame and exit")
     result.add_argument("--dry-run", action="store_true", help="print one frame without contacting the Bar")
+    result.add_argument(
+        "--verbose", action="store_true", help="report periodic transport health checks"
+    )
     return result
 
 
@@ -230,12 +234,14 @@ def main() -> None:
 
     cpu = psutil.cpu_percent(interval=None)
     memory = psutil.virtual_memory().percent
-    element_timeout = max(5, math.ceil(args.interval * 3))
+    element_timeout = max(10, math.ceil(args.interval * 5))
     bar: BusyBar | None = None
     candidate: Candidate | None = None
     reconnect_attempt = 0
     next_better_connection_poll = 0.0
     display_suppressed = False
+    probe_future: Future[tuple[BusyBar, Candidate]] | None = None
+    probe_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="busybar-probe")
 
     try:
         while not stop_event.is_set():
@@ -276,14 +282,20 @@ def main() -> None:
                     break
 
             try:
-                if time.monotonic() >= next_better_connection_poll:
+                if probe_future is not None and probe_future.done():
                     try:
-                        probe_bar, probe_candidate = resolve()
-                    except RuntimeError:
-                        pass
+                        probe_bar, probe_candidate = probe_future.result()
+                    except RuntimeError as exc:
+                        if args.verbose:
+                            print(f"Transport check failed: {exc}", file=sys.stderr)
                     else:
                         if same_route(probe_candidate, candidate):
                             probe_bar.close()
+                            if args.verbose:
+                                print(
+                                    f"Connection healthy via {candidate.name}",
+                                    file=sys.stderr,
+                                )
                         elif is_better(probe_candidate, candidate):
                             old_bar = bar
                             bar = probe_bar
@@ -298,6 +310,15 @@ def main() -> None:
                             print(f"Switched to {candidate.name}", file=sys.stderr)
                         else:
                             probe_bar.close()
+                    probe_future = None
+
+                if (
+                    probe_future is None
+                    and time.monotonic() >= next_better_connection_poll
+                ):
+                    if args.verbose:
+                        print("Checking for a better connection", file=sys.stderr)
+                    probe_future = probe_executor.submit(resolve)
                     next_better_connection_poll = (
                         time.monotonic() + BETTER_CONNECTION_POLL_SECONDS
                     )
@@ -348,6 +369,11 @@ def main() -> None:
                 candidate = None
                 display_suppressed = False
     finally:
+        if probe_future is not None and probe_future.done():
+            with contextlib.suppress(Exception):
+                probe_bar, _probe_candidate = probe_future.result()
+                probe_bar.close()
+        probe_executor.shutdown(wait=True, cancel_futures=True)
         if bar is not None:
             with contextlib.suppress(Exception):
                 bar.display_clear(application_name=APP_NAME)

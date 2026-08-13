@@ -45,5 +45,6 @@ The connection order is mDNS discovery, USB at `10.0.4.20`, the configured
 home LAN address, then BUSY Cloud. Every candidate must report the configured
 serial number before the monitor writes to it. The monitor reconnects with
 bounded backoff after a connection fails and checks every 30 seconds for a
-better transport, preferring USB over LAN and LAN over BUSY Cloud. Stop the
-monitor with `Ctrl-C`.
+better transport in the background, preferring USB over LAN and LAN over BUSY
+Cloud. Pass `--verbose` to report those periodic health checks. Stop the monitor
+with `Ctrl-C`.
