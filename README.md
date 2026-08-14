@@ -54,14 +54,15 @@ The stock application defaults to the symbols in the Apple Stocks watchlist
 used when it was created. Set a persistent default with a space-separated
 `BUSYBAR_STOCK_SYMBOLS` value or pass symbols on the command line. It uses Yahoo
 Finance's unofficial chart endpoint without an account or API key. Quotes
-refresh once per minute and are cached under `~/Library/Caches/busybar/`, so
-temporary throttling or outages retain the last successful chart.
+are cached by history range under `~/Library/Caches/busybar/`, so temporary
+throttling or outages retain the last successful chart.
 
 Preview the generated display payload without contacting the device:
 
 ```sh
 uv run busybar system --dry-run
 uv run busybar stocks AAPL MSFT --dry-run
+uv run busybar stocks AAPL MSFT --history monthly --dry-run
 uv run busybar weather "Indianapolis, Indiana" --dry-run
 ```
 
@@ -89,14 +90,26 @@ Updated forecasts are uploaded to an inactive asset slot and activated at a
 cycle boundary. Failed refreshes retain the cached forecast.
 
 Stock symbols rotate every ten seconds. Override the display and market-data
-cadence with `--rotate` and `--refresh`. Percentage change is shown by default;
-use `--change points` to show the absolute price change instead. The CLI renders
-every stock page into a cached, continuously looping animation asset. The BUSY
-Bar plays the 24 FPS vertical page swipes and chart reveals locally, without
-clearing the display or making an HTTP request for each frame. Quote refreshes
-rebuild the inactive asset slot before switching to it at a cycle boundary.
-Failed Yahoo refreshes retain the previous asset, use exponential backoff, and mark data
-older than three refresh intervals in yellow.
+cadence with `--rotate` and `--refresh`. Select the chart range with
+`--history daily`, `weekly`, `monthly`, or `yearly`; daily remains the default.
+Each range uses a matching Yahoo sampling and refresh cadence:
+
+| History | Yahoo range | Samples | Refresh |
+| --- | --- | --- | --- |
+| `daily` | 1 day | 5 minutes | 1 minute |
+| `weekly` | 5 trading days | 15 minutes | 5 minutes |
+| `monthly` | 1 month | 1 hour | 15 minutes |
+| `yearly` | 1 year | 1 day | 1 hour |
+
+An explicit `--refresh` overrides the range default. Percentage change is shown
+by default; use `--change points` to show the absolute price change instead.
+Both values are calculated from the beginning of the selected chart range. The
+CLI renders every stock page into a cached, continuously looping animation
+asset. The BUSY Bar plays the 24 FPS vertical page swipes and chart reveals
+locally, without clearing the display or making an HTTP request for each frame.
+Quote refreshes rebuild the inactive asset slot before switching to it at a
+cycle boundary. Failed Yahoo refreshes retain the previous asset, use
+exponential backoff, and mark data older than three refresh intervals in yellow.
 
 The connection order is mDNS discovery, USB at `10.0.4.20`, the configured
 home LAN address, then BUSY Cloud. Every candidate must report the configured

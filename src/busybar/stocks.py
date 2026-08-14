@@ -72,6 +72,21 @@ ASSET_FILENAMES = ("stocks-a.anim", "stocks-b.anim")
 
 
 @dataclass(frozen=True)
+class HistoryProfile:
+    yahoo_range: str
+    yahoo_interval: str
+    refresh_seconds: int
+
+
+HISTORY_PROFILES = {
+    "daily": HistoryProfile("1d", "5m", DEFAULT_REFRESH_SECONDS),
+    "weekly": HistoryProfile("5d", "15m", 5 * 60),
+    "monthly": HistoryProfile("1mo", "1h", 15 * 60),
+    "yearly": HistoryProfile("1y", "1d", 60 * 60),
+}
+
+
+@dataclass(frozen=True)
 class MarketSeries:
     symbol: str
     currency: str
@@ -92,11 +107,12 @@ class MarketSeries:
         return self.price - self.previous_close
 
 
-def cache_path() -> Path:
+def cache_path(history: str = "daily") -> Path:
     root = os.getenv("XDG_CACHE_HOME")
+    filename = "stocks.json" if history == "daily" else f"stocks-{history}.json"
     if root:
-        return Path(root) / "busybar" / "stocks.json"
-    return Path.home() / "Library" / "Caches" / "busybar" / "stocks.json"
+        return Path(root) / "busybar" / filename
+    return Path.home() / "Library" / "Caches" / "busybar" / filename
 
 
 def load_cache(path: Path) -> dict[str, MarketSeries]:
@@ -117,7 +133,9 @@ def save_cache(path: Path, series: dict[str, MarketSeries]) -> None:
 
 
 def parse_chart(
-    payload: dict[str, Any], fetched_at: float | None = None
+    payload: dict[str, Any],
+    fetched_at: float | None = None,
+    history: str = "daily",
 ) -> MarketSeries:
     chart = payload["chart"]
     if chart.get("error"):
@@ -134,6 +152,8 @@ def parse_chart(
     if not points:
         raise ValueError("Yahoo returned no price points")
     previous_close = meta.get("previousClose") or meta.get("chartPreviousClose")
+    if history != "daily":
+        previous_close = points[0][1]
     price = meta.get("regularMarketPrice") or points[-1][1]
     if previous_close is None:
         previous_close = points[0][1]
@@ -148,30 +168,37 @@ def parse_chart(
     )
 
 
-def fetch_symbol(symbol: str, timeout: float = 8) -> MarketSeries:
+def fetch_symbol(
+    symbol: str, history: str = "daily", timeout: float = 8
+) -> MarketSeries:
+    profile = HISTORY_PROFILES[history]
     encoded = urllib.parse.quote(symbol, safe=".-^")
-    query = urllib.parse.urlencode({"interval": "5m", "range": "1d"})
+    query = urllib.parse.urlencode(
+        {"interval": profile.yahoo_interval, "range": profile.yahoo_range}
+    )
     request = urllib.request.Request(
         f"{YAHOO_URL.format(symbol=encoded)}?{query}",
         headers={"Accept": "application/json", "User-Agent": "busybar/0.1"},
     )
     with urllib.request.urlopen(request, timeout=timeout) as response:
-        return parse_chart(json.load(response))
+        return parse_chart(json.load(response), history=history)
 
 
 def refresh_series(
-    symbols: list[str], existing: dict[str, MarketSeries]
+    symbols: list[str],
+    existing: dict[str, MarketSeries],
+    history: str = "daily",
 ) -> tuple[dict[str, MarketSeries], list[str]]:
     updated = dict(existing)
     failures: list[str] = []
     for symbol in symbols:
         try:
-            updated[symbol] = fetch_symbol(symbol)
+            updated[symbol] = fetch_symbol(symbol, history)
         except (OSError, ValueError, KeyError, TypeError, urllib.error.URLError) as exc:
             failures.append(f"{symbol}: {type(exc).__name__}")
     if updated != existing:
         with contextlib.suppress(OSError):
-            save_cache(cache_path(), updated)
+            save_cache(cache_path(history), updated)
     return updated, failures
 
 
@@ -227,8 +254,13 @@ def parser() -> argparse.ArgumentParser:
     result.add_argument(
         "--refresh",
         type=float,
-        default=DEFAULT_REFRESH_SECONDS,
-        help="quote refresh seconds",
+        help="quote refresh seconds (default: based on --history)",
+    )
+    result.add_argument(
+        "--history",
+        choices=tuple(HISTORY_PROFILES),
+        default="daily",
+        help="chart history range (default: daily)",
     )
     result.add_argument(
         "--change",
@@ -257,14 +289,31 @@ def configured_symbols(arguments: list[str]) -> list[str]:
     )
 
 
+def refresh_seconds(history: str, override: float | None = None) -> float:
+    if override is not None:
+        return override
+    return HISTORY_PROFILES[history].refresh_seconds
+
+
 def main(argv: list[str] | None = None) -> None:
     args = parser().parse_args(argv)
+    data_refresh_seconds = refresh_seconds(args.history, args.refresh)
     if args.rotate < 2:
         parser().error("--rotate must be at least 2 seconds")
-    if args.refresh < 15:
+    if data_refresh_seconds < 15:
         parser().error("--refresh must be at least 15 seconds")
+    if args.verbose:
+        profile = HISTORY_PROFILES[args.history]
+        status(
+            f"Using {args.history} history "
+            f"({profile.yahoo_range}/{profile.yahoo_interval}); "
+            f"refreshing every {data_refresh_seconds:g}s",
+            timestamp=True,
+        )
     symbols = configured_symbols(args.symbols)
-    market, failures = refresh_series(symbols, load_cache(cache_path()))
+    market, failures = refresh_series(
+        symbols, load_cache(cache_path(args.history)), args.history
+    )
     available = [symbol for symbol in symbols if symbol in market]
     if not available:
         parser().error(f"no market data available ({'; '.join(failures)})")
@@ -274,7 +323,7 @@ def main(argv: list[str] | None = None) -> None:
             timestamp=args.verbose,
         )
 
-    stale_after = args.refresh * 3
+    stale_after = data_refresh_seconds * 3
     animation = build_stock_animation(
         animation_pages(market, available, stale_after, args.change), args.rotate
     )
@@ -282,7 +331,7 @@ def main(argv: list[str] | None = None) -> None:
     asset_filename = ASSET_FILENAMES[asset_slot]
     element_timeout = max(
         120,
-        math.ceil(args.refresh + animation.section_seconds["cycle"] * 2),
+        math.ceil(data_refresh_seconds + animation.section_seconds["cycle"] * 2),
     )
     if args.dry_run:
         payload = animation_frame(
@@ -310,7 +359,7 @@ def main(argv: list[str] | None = None) -> None:
     reconnect_attempt = 0
     display_suppressed = False
     refresh_failures = 0
-    next_refresh = time.monotonic() + args.refresh
+    next_refresh = time.monotonic() + data_refresh_seconds
     next_probe = 0.0
     refresh_future: Future[tuple[dict[str, MarketSeries], list[str]]] | None = None
     probe_future: Future[tuple[BusyBar, Candidate]] | None = None
@@ -428,7 +477,7 @@ def main(argv: list[str] | None = None) -> None:
                             f"Animation asset refresh failed ({type(exc).__name__}); keeping previous data",
                             timestamp=args.verbose,
                         )
-                        next_refresh = time.monotonic() + args.refresh
+                        next_refresh = time.monotonic() + data_refresh_seconds
                     else:
                         pending_update = (
                             refreshed,
@@ -439,7 +488,10 @@ def main(argv: list[str] | None = None) -> None:
                         )
                     if refresh_errors:
                         refresh_failures += 1
-                        delay = min(300, args.refresh * (2 ** min(refresh_failures, 3)))
+                        delay = min(
+                            max(300, data_refresh_seconds * 4),
+                            data_refresh_seconds * (2 ** min(refresh_failures, 3)),
+                        )
                         next_refresh = time.monotonic() + delay
                         status(
                             f"Yahoo refresh failed ({'; '.join(refresh_errors)}); retrying in {delay:.0f}s",
@@ -447,7 +499,7 @@ def main(argv: list[str] | None = None) -> None:
                         )
                     else:
                         refresh_failures = 0
-                        next_refresh = time.monotonic() + args.refresh
+                        next_refresh = time.monotonic() + data_refresh_seconds
                         if args.verbose:
                             status("Yahoo quotes refreshed", timestamp=True)
 
@@ -476,7 +528,7 @@ def main(argv: list[str] | None = None) -> None:
                 now = time.monotonic()
                 if refresh_future is None and now >= next_refresh:
                     refresh_future = refresh_executor.submit(
-                        refresh_series, symbols, market
+                        refresh_series, symbols, market, args.history
                     )
                     next_refresh = math.inf
                 if probe_future is None and now >= next_probe:
@@ -507,7 +559,8 @@ def main(argv: list[str] | None = None) -> None:
                     element_timeout = max(
                         120,
                         math.ceil(
-                            args.refresh + animation.section_seconds["cycle"] * 2
+                            data_refresh_seconds
+                            + animation.section_seconds["cycle"] * 2
                         ),
                     )
                     start_animation()
