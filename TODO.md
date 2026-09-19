@@ -1,5 +1,18 @@
 # TODO
 
+## On-Device JavaScript Weather
+
+Firmware 1.2.3 introduced an experimental JavaScript runtime and storage-loaded
+apps. The [weather prototype](device-apps/README.md) targets official 1.2.4;
+custom firmware is no longer the first step for standalone apps.
+
+- [x] Implement current Indianapolis weather, high/low, caching, and retries.
+- [x] Add host tests for refresh timing, invalid responses, and offline recovery.
+- [x] Verify on-device launch, live fetch, rendering, exit, and relaunch.
+- [ ] Complete an extended on-device refresh soak.
+- [ ] Verify cached weather during a real Wi-Fi outage.
+- [ ] Add forecast pages after the standalone prototype is verified.
+
 ## Interactive Stock Navigation
 
 - [ ] Build and flash an unchanged firmware 1.1.1 image; prove rollback first.
@@ -18,9 +31,11 @@ The detailed architecture, phases, risks, and acceptance criteria are in
 
 ## Deferred: Custom Firmware and On-Device Apps
 
-Start from the official
+The following is the historical native-C workstream for firmware 1.1.1.
+Reassess the current firmware and JavaScript capabilities before resuming it.
+For that historical baseline, start from the official
 [`busybar-firmware`](https://github.com/busy-app/busybar-firmware) `1.1.1` tag,
-which matches the firmware currently installed on the BUSY Bar. Do not base the
+which matched the firmware installed during the August investigation. Do not base the
 first attempt on `dev`, unsigned presets, or the full wireless-firmware flashing
 path.
 
@@ -42,9 +57,10 @@ path.
       modes cannot run on-device unchanged.
 - [ ] Document and test rollback to a clean `1.1.1` checkout.
 
-Current firmware contains external-app build scaffolding, but its Apps menu and
+Firmware 1.1.1 contains external-app build scaffolding, but its Apps menu and
 loader use compiled-in application lists. Treat custom apps as firmware builds,
-not runtime-installable packages, until the loader gains that capability.
+not runtime-installable packages on that version. Firmware 1.2.3 and later add a
+separate experimental path for storage-loaded JavaScript apps.
 
 Use only the normal signed `flash_usb` path for the first prototype. Avoid
 `flash_usb_full`: it also updates the SiWG917 wireless firmware and needs Flipper

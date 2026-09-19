@@ -6,6 +6,9 @@ The `busybar` CLI runs separate applications on a Flipper BUSY Bar:
 - `busybar stocks` rotates through intraday changes and charts.
 - `busybar weather` displays current conditions and short-range forecasts.
 
+An experimental [on-device weather app](device-apps/README.md) runs directly on
+official firmware 1.2.4 without a continuously running Mac process.
+
 The system application keeps CPU, memory, CPU temperature, and ping latency
 visible together in a stable four-cell overview. Each cell includes a compact
 value, direction indicator, utilization meter, and recent peak marker. Samples

@@ -1,0 +1,10 @@
+{
+  "format_version": 1,
+  "id": "app.ntwrknrd.weather",
+  "name": "Indy Weather",
+  "version": "0.1.0",
+  "description": "Indianapolis weather over Wi-Fi, powered by Open-Meteo",
+  "author": "ntwrknrd",
+  "heap_size_kib": 64,
+  "debug": false
+}
