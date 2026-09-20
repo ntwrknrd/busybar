@@ -1,0 +1,10 @@
+{
+  "format_version": 1,
+  "id": "app.ntwrknrd.weather",
+  "name": "Carmel Weather",
+  "version": "0.6.0",
+  "description": "Weather for Carmel 46032, powered by Open-Meteo",
+  "author": "ntwrknrd",
+  "heap_size_kib": 128,
+  "debug": false
+}
