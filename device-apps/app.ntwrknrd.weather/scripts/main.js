@@ -166,16 +166,23 @@ function frontBitmap(now, old, today) {
         label("CARMEL",1,1,"W",1);
         label("46032 LOADING",1,10,"B",1);
     } else {
-        // Reserve a 19-pixel left column: compact icon, then the five-digit ZIP.
+        // Left column: 11-pixel icon, one-pixel gap, four-pixel ZIP.
         if (old) {
             label("?",6,0,"Y",2);
         } else {
             const iconRows = weatherIcon(reading.code, reading.isDay).split("\n").slice(9,25);
-            for (let y = 0; y < 10; y++) for (let x = 0; x < 16; x++) {
-                dot(x+1,y,iconRows[Math.min(15, Math.floor(y*1.6))][x]);
+            for (let y = 0; y < 11; y++) for (let x = 0; x < 18; x++) {
+                dot(x,y,iconRows[Math.floor(y*16/11)][Math.floor(x*16/18)]);
             }
         }
-        label("46032",0,11,"C",1);
+        // Compact four-row digits keep ZIP readable without crowding the icon.
+        const zipDigits = ["101101111001", "100111101111", "111101101111",
+            "111011001111", "110011100111"];
+        for (let n = 0; n < zipDigits.length; n++) {
+            for (let y = 0; y < 4; y++) for (let x = 0; x < 3; x++) {
+                if (zipDigits[n][y*3+x] === "1") dot(n*4+x,y+12,"C");
+            }
+        }
         function value(number, color) {
             label(number,22,0,color,number.length <= 3 ? 2 : 1,3);
         }
@@ -195,8 +202,9 @@ function frontBitmap(now, old, today) {
             value(String(Math.round(reading.wind)),"W");
             description("WIND","MPH");
         } else if (page === 3) {
-            value(String(Math.round(reading.humidity)),"W");
-            description("HUMID","%");
+            label("HUMIDITY",21,5,"B",1);
+            const humidity = String(Math.round(reading.humidity)) + " %";
+            label(humidity,73 - humidity.length*4,5,"W",1);
         } else if (page === 4) {
             const timing = precipitationTiming(now, old);
             if (timing[0] === "~") {
