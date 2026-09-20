@@ -13,9 +13,11 @@ example's USB address did not work with USB networking unavailable.
 
 The front display rotates through current temperature/conditions, high/low,
 wind speed (mph), relative humidity (%), and the next precipitation forecast.
-Each view lasts 10 seconds. ZIP 46032 appears at the upper right of the current
-temperature view, with Fahrenheit immediately after the temperature digits.
-A yellow question mark replaces the left weather icon on every stale page.
+Each view lasts 10 seconds. ZIP 46032 sits beneath the compact weather icon
+in the left column of every page. Values use nearly the full display height,
+with compact descriptions and units to their right. Fahrenheit remains beside
+the temperature digits. A yellow question mark replaces the icon on stale pages
+while the ZIP remains visible.
 Each front view is a single XPM bitmap, so text and icons update together; the
 renderer reuses this repository's pixel alphabet.
 

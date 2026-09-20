@@ -292,21 +292,22 @@ test('rejects malformed forecast series and wrong precipitation units', async ()
     }
 });
 
-test('ZIP is upper right, Fahrenheit follows digits, stale icon replaces weather on every page', async () => {
+test('ZIP sits below the icon, tall values and right labels remain clear when stale', async () => {
     const s = boot();
     await settle();
     const bitmap = (page, old) => vm.runInContext(
         `frontBitmap(${epoch + page * 10000}, ${old}, true)`, s.context).trimEnd().split('\n').slice(9);
     const region = (rows, x, y, w, h) => rows.slice(y,y+h).map(row => row.slice(x,x+w)).join('');
     const current = bitmap(0, false);
-    assert.match(region(current,53,0,19,5), /B/);
-    assert.match(region(current,36,1,3,5), /C/);
-    assert.doesNotMatch(region(current,39,0,14,5), /[WCB]/);
+    assert.match(region(current,0,11,19,5), /C/);
+    assert.match(region(current,37,0,3,5), /C/);
+    assert.doesNotMatch(region(current,44,0,4,16), /[WCB]/);
     for (let page = 0; page < 5; page++) {
         const fresh = bitmap(page, false), old = bitmap(page, true);
-        assert.notEqual(region(fresh,0,0,16,16), region(old,0,0,16,16));
-        assert.match(region(old,0,0,16,16), /Y/);
-        assert.doesNotMatch(region(old,0,0,16,16), /[WCBMR]/);
+        assert.notEqual(region(fresh,0,0,19,10), region(old,0,0,19,10));
+        assert.match(region(old,0,0,19,10), /Y/);
+        assert.equal(region(fresh,0,11,19,5), region(old,0,11,19,5));
+        assert.doesNotMatch(region(old,0,0,19,10), /[WCBMR]/);
         if (page !== 4) assert.equal(region(fresh,20,0,52,16), region(old,20,0,52,16));
     }
 });

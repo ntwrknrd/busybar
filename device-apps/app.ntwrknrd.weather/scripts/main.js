@@ -141,7 +141,7 @@ function pageIndex(now) {
     return Math.floor((now - startedAt) / 10000) % 5;
 }
 
-const PIXEL_FONT = {"A":"010101111101101","B":"110101110101110","C":"011100100100011","D":"110101101101110","E":"111100110100111","F":"111100110100100","G":"011100101101011","H":"101101111101101","I":"111010010010111","J":"001001001101010","K":"101101110101101","L":"100100100100111","M":"101111111101101","N":"101111111111101","O":"010101101101010","P":"110101110100100","Q":"010101101111011","R":"110101110101101","S":"011100010001110","T":"111010010010010","U":"101101101101111","V":"101101101101010","W":"101101111111101","X":"101101010101101","Y":"101101010010010","Z":"111001010100111","0":"111101101101111","1":"010110010010111","2":"110001010100111","3":"110001010001110","4":"101101111001001","5":"111100110001110","6":"011100111101111","7":"111001010010010","8":"111101111101111","9":"111101111001110","+":"000010111010000","-":"000000111000000",".":"000000000000010","^":"010101000000000","~":"000000010101000","%":"101001010100101","?":"110001010000010"," ":"000000000000000"};
+const PIXEL_FONT = {"A":"010101111101101","B":"110101110101110","C":"011100100100011","D":"110101101101110","E":"111100110100111","F":"111100110100100","G":"011100101101011","H":"101101111101101","I":"111010010010111","J":"001001001101010","K":"101101110101101","L":"100100100100111","M":"101111111101101","N":"101111111111101","O":"010101101101010","P":"110101110100100","Q":"010101101111011","R":"110101110101101","S":"011100010001110","T":"111010010010010","U":"101101101101111","V":"101101101101010","W":"101101111111101","X":"101101010101101","Y":"101101010010010","Z":"111001010100111","0":"111101101101111","1":"010110010010111","2":"110001010100111","3":"110001010001110","4":"101101111001001","5":"111100110001110","6":"011100111101111","7":"111001010010010","8":"111101111101111","9":"111101111001110","+":"000010111010000","-":"000000111000000",".":"000000000000010","^":"010101000000000","/":"001001010100100","~":"000000010101000","%":"101001010100101","?":"110001010000010"," ":"000000000000000"};
 
 function frontBitmap(now, old, today) {
     const pixels = [];
@@ -149,13 +149,14 @@ function frontBitmap(now, old, today) {
     function dot(x, y, color) {
         if (x >= 0 && x < 72 && y >= 0 && y < 16) pixels[y * 72 + x] = color;
     }
-    function label(value, x, y, color, scale) {
+    function label(value, x, y, color, scale, height) {
+        height = height || scale;
         for (let n = 0; n < value.length; n++) {
             const glyph = PIXEL_FONT[value[n]] || PIXEL_FONT["?"];
             for (let row = 0; row < 5; row++) for (let col = 0; col < 3; col++) {
                 if (glyph[row * 3 + col] === "1") {
-                    for (let dy = 0; dy < scale; dy++) for (let dx = 0; dx < scale; dx++) {
-                        dot(x + n * 4 * scale + col * scale + dx, y + row * scale + dy, color);
+                    for (let dy = 0; dy < height; dy++) for (let dx = 0; dx < scale; dx++) {
+                        dot(x + n * 4 * scale + col * scale + dx, y + row * height + dy, color);
                     }
                 }
             }
@@ -165,36 +166,56 @@ function frontBitmap(now, old, today) {
         label("CARMEL",1,1,"W",1);
         label("46032 LOADING",1,10,"B",1);
     } else {
+        // Reserve a 19-pixel left column: compact icon, then the five-digit ZIP.
         if (old) {
-            label("?",5,3,"Y",2);
+            label("?",6,0,"Y",2);
         } else {
             const iconRows = weatherIcon(reading.code, reading.isDay).split("\n").slice(9,25);
-            for (let y = 0; y < 16; y++) for (let x = 0; x < 16; x++) dot(x,y,iconRows[y][x]);
+            for (let y = 0; y < 10; y++) for (let x = 0; x < 16; x++) {
+                dot(x+1,y,iconRows[Math.min(15, Math.floor(y*1.6))][x]);
+            }
+        }
+        label("46032",0,11,"C",1);
+        function value(number, color) {
+            label(number,22,0,color,number.length <= 3 ? 2 : 1,3);
+        }
+        function description(top, bottom) {
+            label(top,48,1,"B",1);
+            label(bottom,48,10,"B",1);
         }
         const page = pageIndex(now);
         if (page === 1) {
-            label("HIGH  LOW",20,0,"B",1);
             const high = today ? String(Math.round(reading.high)) : "--";
             const low = today ? String(Math.round(reading.low)) : "--";
-            label("H",20,11,"R",1);
-            label(high,25,6,"R",high.length > 2 ? 1 : 2);
-            label("L",46,11,"B",1);
-            label(low,51,6,"B",low.length > 2 ? 1 : 2);
-        } else if (page === 2 || page === 3) {
-            label(page === 2 ? "WIND MPH" : "HUMIDITY",20,0,"B",1);
-            const value = page === 2 ? String(Math.round(reading.wind)) :
-                String(Math.round(reading.humidity)) + "%";
-            label(value,20,6,"W",value.length > 6 ? 1 : 2);
+            label(high,22,0,"R",high.length <= 2 ? 2 : 1,3);
+            label("H",38,5,"R",1);
+            label(low,47,0,"B",low.length <= 2 ? 2 : 1,3);
+            label("L",63,5,"B",1);
+        } else if (page === 2) {
+            value(String(Math.round(reading.wind)),"W");
+            description("WIND","MPH");
+        } else if (page === 3) {
+            value(String(Math.round(reading.humidity)),"W");
+            description("HUMID","%");
         } else if (page === 4) {
-            label("NEXT PRECIP",20,0,"B",1);
-            label(precipitationTiming(now, old),20,10,"W",1);
+            const timing = precipitationTiming(now, old);
+            if (timing[0] === "~") {
+                const parts = timing.slice(1).split(" ");
+                value(parts[0],"W");
+                description("PRECIP","~" + parts[1]);
+            } else {
+                value(timing === "UNAVAILABLE" ? "?" : timing === "NONE 24H" ? "NONE" : "NOW","W");
+                description("PRECIP",timing === "NONE 24H" ? "24H" : timing === "UNAVAILABLE" ? "N/A" : "");
+            }
         } else {
             const temperature = String(Math.round(reading.temperature));
-            const scale = temperature.length <= 3 ? 2 : 1;
-            label(temperature,20,0,"W",scale);
-            label("F",20 + temperature.length * 4 * scale,1,"C",1);
-            label("46032",53,0,"B",1);
-            label(conditions(reading.code),20,11,"B",1);
+            value(temperature,"W");
+            label("F",21 + temperature.length * (temperature.length <= 3 ? 8 : 4),0,"C",1);
+            const condition = conditions(reading.code);
+            if (condition === "PART CLOUD") description("PARTLY","CLOUDY");
+            else if (condition === "MAINLY CLR") description("MAINLY","CLEAR");
+            else if (condition === "OVERCAST") description("OVER","CAST");
+            else description(condition.slice(0,6),condition.slice(6));
         }
     }
     let data = "! XPM2\n72 16 7 1\n. c #000000\nY c #FFD43B\nC c #899BAD\n" +
