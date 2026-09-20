@@ -6,7 +6,8 @@ Firmware 1.2.3 introduced an experimental JavaScript runtime and storage-loaded
 apps. The [weather prototype](device-apps/README.md) targets official 1.2.4;
 custom firmware is no longer the first step for standalone apps.
 
-- [x] Implement current Indianapolis weather, high/low, caching, and retries.
+- [x] Implement Carmel ZIP 46032 weather, high/low, caching, and retries.
+- [x] Add weather icons, separate current/forecast views, and source timestamps.
 - [x] Add host tests for refresh timing, invalid responses, and offline recovery.
 - [x] Verify on-device launch, live fetch, rendering, exit, and relaunch.
 - [ ] Complete an extended on-device refresh soak.

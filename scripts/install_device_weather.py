@@ -46,8 +46,8 @@ def main() -> None:
             entry.name for entry in bar.storage_list(FLAG_DIR).list
         }:
             raise RuntimeError("Experimental Apps-menu flag was not created")
-        print(f"Verified Indy Weather installation via {route.name} on firmware {version}.")
-        print("Reload Apps with the mode switch, then select Indy Weather > Start.")
+        print(f"Verified Carmel Weather installation via {route.name} on firmware {version}.")
+        print("Reload Apps with the mode switch, then select Carmel Weather > Start.")
     finally:
         bar.close()
 
