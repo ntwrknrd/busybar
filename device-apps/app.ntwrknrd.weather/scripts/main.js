@@ -1,6 +1,6 @@
 // BUSY Bar 1.2.4 / JerryScript. No browser, Node, or host process required.
 const APP_ID = "app.ntwrknrd.weather";
-const CACHE_KEY = "forecast-v3-46032";
+const CACHE_KEY = "forecast-v4-46032";
 const REFRESH_MS = 15 * 60 * 1000;
 const SOURCE_MAX_AGE_MS = 30 * 60 * 1000;
 // Explicit prototype tradeoff: 1.2.4 fails this provider's TLS handshake.
@@ -8,6 +8,7 @@ const SOURCE_MAX_AGE_MS = 30 * 60 * 1000;
 const WEATHER_URL = "http://api.open-meteo.com/v1/forecast" +
     "?latitude=39.9712&longitude=-86.1245" +
     "&current=temperature_2m,weather_code,is_day,wind_speed_10m,relative_humidity_2m" +
+    "&minutely_15=precipitation&forecast_minutely_15=98" +
     "&daily=temperature_2m_max,temperature_2m_min,precipitation_probability_max,precipitation_sum" +
     "&temperature_unit=fahrenheit&wind_speed_unit=mph&precipitation_unit=inch&forecast_days=1&timeformat=unixtime" +
     "&timezone=America%2FIndiana%2FIndianapolis";
@@ -20,7 +21,7 @@ let nextRefresh = 0;
 const startedAt = Date.now();
 
 function validReading(value) {
-    return value && value.zip === "46032" &&
+    return value && value.zip === "46032" && validPrecipSeries(value) &&
         [value.temperature, value.code, value.high, value.low,
         value.fetchedAt, value.sourceTime, value.dayTime, value.utcOffset,
         value.isDay, value.wind, value.humidity, value.precipChance, value.precipTotal].every(function (n) {
@@ -29,6 +30,41 @@ function validReading(value) {
         value.wind >= 0 && value.humidity >= 0 && value.humidity <= 100 &&
         value.precipChance >= 0 && value.precipChance <= 100 && value.precipTotal >= 0 &&
         value.low <= value.high && (value.isDay === 0 || value.isDay === 1);
+}
+
+// Each precipitation amount covers the 15 minutes ENDING at its timestamp.
+function validPrecipSeries(value) {
+    const times = value.precipTimes, amounts = value.precipAmounts;
+    return Array.isArray(times) && Array.isArray(amounts) && times.length >= 2 &&
+        times.length <= 100 && times.length === amounts.length &&
+        times.every(function (t, i) {
+            return typeof t === "number" && isFinite(t) && t > 0 &&
+                (i === 0 || t - times[i-1] === 900) &&
+                (amounts[i] === null || (typeof amounts[i] === "number" &&
+                    isFinite(amounts[i]) && amounts[i] >= 0));
+        });
+}
+
+function precipitationTiming(now, old) {
+    if (old) return "UNAVAILABLE";
+    const seconds = now / 1000;
+    const times = reading.precipTimes;
+    if (times[0] - 900 > seconds || times[times.length-1] <= seconds) {
+        return "UNAVAILABLE";
+    }
+    for (let i = 0; i < times.length; i++) {
+        if (times[i] <= seconds) continue;
+        const start = times[i] - 900;
+        if (start >= seconds + 86400) break;
+        if (reading.precipAmounts[i] === null) return "UNAVAILABLE";
+        if (reading.precipAmounts[i] > 0) {
+            if (start <= seconds) return "NOW";
+            const minutes = Math.ceil((start - seconds) / 60);
+            return minutes < 60 ? "~" + minutes + " MIN" :
+                "~" + (Math.round(minutes / 6) / 10) + " HR";
+        }
+    }
+    return times[times.length-1] >= seconds + 86400 ? "NONE 24H" : "UNAVAILABLE";
 }
 
 function conditions(code) {
@@ -105,7 +141,7 @@ function pageIndex(now) {
     return Math.floor((now - startedAt) / 10000) % 5;
 }
 
-const PIXEL_FONT = {"A":"010101111101101","B":"110101110101110","C":"011100100100011","D":"110101101101110","E":"111100110100111","F":"111100110100100","G":"011100101101011","H":"101101111101101","I":"111010010010111","J":"001001001101010","K":"101101110101101","L":"100100100100111","M":"101111111101101","N":"101111111111101","O":"010101101101010","P":"110101110100100","Q":"010101101111011","R":"110101110101101","S":"011100010001110","T":"111010010010010","U":"101101101101111","V":"101101101101010","W":"101101111111101","X":"101101010101101","Y":"101101010010010","Z":"111001010100111","0":"111101101101111","1":"010110010010111","2":"110001010100111","3":"110001010001110","4":"101101111001001","5":"111100110001110","6":"011100111101111","7":"111001010010010","8":"111101111101111","9":"111101111001110","+":"000010111010000","-":"000000111000000",".":"000000000000010","^":"010101000000000","%":"101001010100101","?":"110001010000010"," ":"000000000000000"};
+const PIXEL_FONT = {"A":"010101111101101","B":"110101110101110","C":"011100100100011","D":"110101101101110","E":"111100110100111","F":"111100110100100","G":"011100101101011","H":"101101111101101","I":"111010010010111","J":"001001001101010","K":"101101110101101","L":"100100100100111","M":"101111111101101","N":"101111111111101","O":"010101101101010","P":"110101110100100","Q":"010101101111011","R":"110101110101101","S":"011100010001110","T":"111010010010010","U":"101101101101111","V":"101101101101010","W":"101101111111101","X":"101101010101101","Y":"101101010010010","Z":"111001010100111","0":"111101101101111","1":"010110010010111","2":"110001010100111","3":"110001010001110","4":"101101111001001","5":"111100110001110","6":"011100111101111","7":"111001010010010","8":"111101111101111","9":"111101111001110","+":"000010111010000","-":"000000111000000",".":"000000000000010","^":"010101000000000","~":"000000010101000","%":"101001010100101","?":"110001010000010"," ":"000000000000000"};
 
 function frontBitmap(now, old, today) {
     const pixels = [];
@@ -125,32 +161,42 @@ function frontBitmap(now, old, today) {
             }
         }
     }
-    const iconRows = weatherIcon(reading.code, reading.isDay).split("\n").slice(9,25);
-    for (let y = 0; y < 16; y++) for (let x = 0; x < 16; x++) dot(x,y,iconRows[y][x]);
-    const page = pageIndex(now);
-    if (page === 1) {
-        label("46032",20,0,"B",1);
-        const high = today ? String(Math.round(reading.high)) : "--";
-        const low = today ? String(Math.round(reading.low)) : "--";
-        label("H",20,11,"R",1);
-        label(high,25,6,"R",high.length > 2 ? 1 : 2);
-        label("L",46,11,"B",1);
-        label(low,51,6,"B",low.length > 2 ? 1 : 2);
-    } else if (page === 2 || page === 3) {
-        label(page === 2 ? "WIND MPH" : "HUMIDITY",20,0,"B",1);
-        const value = page === 2 ? String(Math.round(reading.wind)) :
-            String(Math.round(reading.humidity)) + "%";
-        label(value,20,6,"W",value.length > 6 ? 1 : 2);
-    } else if (page === 4) {
-        label("PRECIP TODAY",20,0,"B",1);
-        label(today ? String(Math.round(reading.precipChance)) + "%" : "--%",20,10,"W",1);
-        label(today ? reading.precipTotal.toFixed(2) + "IN" : "--IN",40,10,"B",1);
+    if (!reading) {
+        label("CARMEL",1,1,"W",1);
+        label("46032 LOADING",1,10,"B",1);
     } else {
-        label(String(Math.round(reading.temperature)),20,0,"W",2);
-        label("F",46,1,"C",1);
-        label(conditions(reading.code),20,11,"B",1);
+        if (old) {
+            label("?",5,3,"Y",2);
+        } else {
+            const iconRows = weatherIcon(reading.code, reading.isDay).split("\n").slice(9,25);
+            for (let y = 0; y < 16; y++) for (let x = 0; x < 16; x++) dot(x,y,iconRows[y][x]);
+        }
+        const page = pageIndex(now);
+        if (page === 1) {
+            label("HIGH  LOW",20,0,"B",1);
+            const high = today ? String(Math.round(reading.high)) : "--";
+            const low = today ? String(Math.round(reading.low)) : "--";
+            label("H",20,11,"R",1);
+            label(high,25,6,"R",high.length > 2 ? 1 : 2);
+            label("L",46,11,"B",1);
+            label(low,51,6,"B",low.length > 2 ? 1 : 2);
+        } else if (page === 2 || page === 3) {
+            label(page === 2 ? "WIND MPH" : "HUMIDITY",20,0,"B",1);
+            const value = page === 2 ? String(Math.round(reading.wind)) :
+                String(Math.round(reading.humidity)) + "%";
+            label(value,20,6,"W",value.length > 6 ? 1 : 2);
+        } else if (page === 4) {
+            label("NEXT PRECIP",20,0,"B",1);
+            label(precipitationTiming(now, old),20,10,"W",1);
+        } else {
+            const temperature = String(Math.round(reading.temperature));
+            const scale = temperature.length <= 3 ? 2 : 1;
+            label(temperature,20,0,"W",scale);
+            label("F",20 + temperature.length * 4 * scale,1,"C",1);
+            label("46032",53,0,"B",1);
+            label(conditions(reading.code),20,11,"B",1);
+        }
     }
-    if (old) label("OLD",page >= 2 ? 0 : 59,0,"Y",1);
     let data = "! XPM2\n72 16 7 1\n. c #000000\nY c #FFD43B\nC c #899BAD\n" +
         "W c #FFFFFF\nB c #74BFFF\nM c #B6DEFF\nR c #FFB47A\n";
     for (let y = 0; y < 16; y++) data += pixels.slice(y*72,y*72+72).join("") + "\n";
@@ -158,11 +204,9 @@ function frontBitmap(now, old, today) {
 }
 
 function displayElements(now) {
-    const white = "#FFFFFFFF", blue = "#74BFFFFF";
-    if (!reading) return [
-        text("current", "CARMEL", 1, 1, "small", white),
-        text("range", "46032  LOADING", 1, 10, "tiny", blue)
-    ];
+    const white = "#FFFFFFFF";
+    if (!reading) return [{id: "front", type: "xpmbitmap", x: 0, y: 0,
+        align: "top_left", data: frontBitmap(now, true, false), timeout: 10}];
     const old = stale || now < reading.sourceTime ||
         now - reading.sourceTime > SOURCE_MAX_AGE_MS;
     const today = sameForecastDay(now, reading);
@@ -181,8 +225,7 @@ function displayElements(now) {
     const page = pageIndex(now);
     if (page === 2) detail = "Wind: " + Math.round(reading.wind) + " mph";
     if (page === 3) detail = "Rel. humidity: " + Math.round(reading.humidity) + "%";
-    if (page === 4) detail = today ? "Peak hourly: " + Math.round(reading.precipChance) + "%" :
-        "Precip: unavailable";
+    if (page === 4) detail = "Next: " + precipitationTiming(now, old);
     elements.push(text("back-day", detail, 4, 52, "small", white, "back"));
     elements.push(text("back-total", page === 4 && today ?
         "Today total: " + reading.precipTotal.toFixed(2) + " in" : " ",
@@ -225,7 +268,8 @@ function refresh() {
             body.current_units.wind_speed_10m !== "mp/h" ||
             body.current_units.relative_humidity_2m !== "%" ||
             body.daily_units.precipitation_probability_max !== "%" ||
-            body.daily_units.precipitation_sum !== "inch") throw new Error("Wrong weather units");
+            body.daily_units.precipitation_sum !== "inch" ||
+            body.minutely_15_units.precipitation !== "inch") throw new Error("Wrong weather units");
         const candidate = {
             zip: "46032",
             temperature: body.current.temperature_2m,
@@ -240,7 +284,9 @@ function refresh() {
             wind: body.current.wind_speed_10m,
             humidity: body.current.relative_humidity_2m,
             precipChance: body.daily.precipitation_probability_max[0],
-            precipTotal: body.daily.precipitation_sum[0]
+            precipTotal: body.daily.precipitation_sum[0],
+            precipTimes: body.minutely_15.time,
+            precipAmounts: body.minutely_15.precipitation
         };
         if (!validReading(candidate)) throw new Error("Invalid forecast");
         if (candidate.sourceTime > candidate.fetchedAt + 300000 ||

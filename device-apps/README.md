@@ -11,23 +11,31 @@ Weather responses therefore are not authenticated or encrypted. It sends no
 credentials or personal location. Display requests use `127.0.0.1`; the official
 example's USB address did not work with USB networking unavailable.
 
-The front display alternates an original colored weather icon with current
-Fahrenheit temperature/conditions and a ZIP-labeled high/low view, followed by wind speed (mph), relative humidity
-(%), and precipitation. Each view lasts 10 seconds. Precipitation shows today's
-maximum hourly probability (%) and forecast total (inches, including rain and
-snow water equivalent); these cover the entire local day, not just remaining
-hours. Rear-screen labels clarify the peak-hourly probability and daily total. The rear screen
-shows the city, ZIP, source, and model timestamp. Weather codes distinguish mainly
-clear, partly cloudy, and overcast; clear nights use a moon rather than a sun.
+The front display rotates through current temperature/conditions, high/low,
+wind speed (mph), relative humidity (%), and the next precipitation forecast.
+Each view lasts 10 seconds. ZIP 46032 appears at the upper right of the current
+temperature view, with Fahrenheit immediately after the temperature digits.
+A yellow question mark replaces the left weather icon on every stale page.
 Each front view is a single XPM bitmap, so text and icons update together; the
 renderer reuses this repository's pixel alphabet.
+
+The precipitation page estimates time until the first nonzero 15-minute
+precipitation interval within the next 24 hours. Amounts represent the preceding
+15 minutes, so the countdown targets the interval's start, not its end. It shows
+approximate minutes below one hour, then hours; `NOW` means the current interval
+has forecast precipitation. `NONE 24H` requires complete, dry forecast coverage;
+stale, missing, or insufficient data shows `UNAVAILABLE`. These are model estimates,
+not radar-based minute-by-minute predictions. The rear screen retains the day's
+forecast total in inches (including rain and snow water equivalent).
 
 Successful forecasts refresh every 15 minutes and persist in `localStorage`,
 in a versioned ZIP-specific cache; older caches without the new fields are ignored. Current conditions are
 Open-Meteo model estimates, not thermometer observations. High/low values are
 today's forecast extrema, not the day's observed extrema. Newly fetched model
 data older than 30 minutes is rejected; yesterday's high/low is never shown as
-today's; the same guard hides yesterday's precipitation forecast. Cached readings get an `OLD` marker until a fresh request succeeds.
+today's; the same guard hides yesterday's precipitation total. Cached readings
+get a yellow question-mark icon until a fresh request succeeds;
+the rear timestamp retains an `OLD` label.
 Failures retry after one minute. This prototype omits forecast graphs.
 
 ## Install and launch
@@ -99,3 +107,10 @@ The live response showed 8.2 mph wind, 79% relative humidity, 43% peak hourly
 precipitation probability, and 1.094 inches forecast for the whole day. Thirteen
 JavaScript tests and 53 Python tests pass, including new field validation and
 hiding previous-day precipitation.
+
+The subsequent timing/layout revision replaces the front daily precipitation
+summary with an approximate next-event countdown. Hardware captures verified
+ZIP placement, Fahrenheit spacing, and the live countdown. Sixteen JavaScript
+tests cover forecast interval boundaries, missing data, midnight, stale icons,
+and pixel placement. Loading also uses the same bitmap ID as live weather to
+avoid startup text overlapping the first forecast.

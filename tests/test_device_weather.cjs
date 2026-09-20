@@ -9,6 +9,11 @@ const source = fs.readFileSync(path.join(root, 'scripts/main.js'), 'utf8');
 const epoch = 1800000000000;
 const good = {current: {temperature_2m: 78.2, weather_code: 0, is_day: 1, wind_speed_10m: 6.4, relative_humidity_2m: 65, time: epoch / 1000},
     utc_offset_seconds: -14400,
+    minutely_15_units: {precipitation: 'inch'},
+    minutely_15: {
+        time: Array.from({length: 98}, (_, i) => Math.floor(epoch / 900000) * 900 + i * 900),
+        precipitation: Array(98).fill(0)
+    },
     current_units: {temperature_2m: '\u00b0F', wind_speed_10m: 'mp/h', relative_humidity_2m: '%'},
     daily_units: {temperature_2m_max: '\u00b0F', temperature_2m_min: '\u00b0F', precipitation_probability_max: '%', precipitation_sum: 'inch'},
     daily: {precipitation_probability_max: [40], precipitation_sum: [0.12], temperature_2m_max: [82.5], temperature_2m_min: [64.1],
@@ -59,7 +64,7 @@ test('fetches without Response.ok/status, renders values, refreshes at 15 minute
     assert.equal(JSON.parse(s.cached).temperature, 78.2);
     assert.match(element(s, 'front').data, /^! XPM2\n72 16 7 1/);
     assert.match(s.url, /latitude=39.9712&longitude=-86.1245/);
-    assert.equal(s.cacheKey, 'forecast-v3-46032');
+    assert.equal(s.cacheKey, 'forecast-v4-46032');
     assert.equal(JSON.parse(s.cached).temperature, 78.2);
     s.now += 899999;
     s.tick();
@@ -103,7 +108,8 @@ test('invalid API response cannot replace good cache', async () => {
 test('corrupt cache and network failure show waiting screen', async () => {
     const s = boot({cached: '{broken', failure: true});
     await settle();
-    assert.equal(element(s, 'range').text, '46032  LOADING');
+    assert.equal(s.draws.at(-1).elements.length, 1);
+    assert.equal(element(s, 'front').type, 'xpmbitmap');
 });
 
 test('cache write failure does not discard live weather', async () => {
@@ -164,7 +170,8 @@ test('wrong-location cache is discarded and yesterday highs/lows are hidden', as
     const s = boot({cached: JSON.stringify({temperature: 99, code: 1,
         high: 101, low: 85, fetchedAt: epoch}), failure: true});
     await settle();
-    assert.equal(element(s, 'current').text, 'CARMEL');
+    assert.equal(s.draws.at(-1).elements.length, 1);
+    assert.equal(element(s, 'front').type, 'xpmbitmap');
     const live = boot();
     await settle();
     live.failure = true;
@@ -187,7 +194,7 @@ test('rotates wind, humidity and whole-day precipitation with explicit units', a
     assert.equal(cached.precipTotal, 0.12);
     const frames = new Set([element(s, 'front').data]);
     for (const [seconds, expected] of [[10, /today/], [20, /Wind: 6 mph/],
-        [30, /Rel. humidity: 65%/], [40, /Peak hourly: 40%/]]) {
+        [30, /Rel. humidity: 65%/], [40, /Next: NONE 24H/]]) {
         s.now = epoch + seconds * 1000;
         s.tick();
         await settle();
@@ -200,7 +207,7 @@ test('rotates wind, humidity and whole-day precipitation with explicit units', a
     s.now = epoch + 86440000;
     s.tick();
     await settle();
-    assert.equal(element(s, 'back-day').text, 'Precip: unavailable');
+    assert.equal(element(s, 'back-day').text, 'Next: UNAVAILABLE');
     assert.equal(element(s, 'back-total').text, ' ');
 });
 
@@ -239,5 +246,67 @@ test('zero wind, humidity and precipitation are valid, legacy cache is rejected'
     delete legacy.humidity;
     const restarted = boot({cached: JSON.stringify(legacy), failure: true});
     await settle();
-    assert.equal(element(restarted, 'current').text, 'CARMEL');
+    assert.equal(restarted.draws.at(-1).elements.length, 1);
+    assert.equal(element(restarted, 'front').type, 'xpmbitmap');
+});
+
+
+test('precipitation timing respects interval ends and counts down across midnight', async () => {
+    const s = boot();
+    await settle();
+    const set = code => vm.runInContext(code, s.context);
+    const start = Math.floor(epoch / 900000) * 900;
+    set('reading.precipAmounts[3] = 0.01');
+    assert.equal(set(`precipitationTiming(${(start + 900) * 1000}, false)`), '~15 MIN');
+    assert.equal(set(`precipitationTiming(${(start + 1800) * 1000}, false)`), 'NOW');
+    // A wet interval that has ended must not be called current precipitation.
+    assert.equal(set(`precipitationTiming(${(start + 2700) * 1000}, false)`), 'UNAVAILABLE');
+    set('reading.precipAmounts[3] = 0; reading.precipAmounts[7] = 0.01');
+    assert.equal(set(`precipitationTiming(${start * 1000}, false)`), '~1.5 HR');
+    assert.equal(set(`precipitationTiming(${start * 1000}, true)`), 'UNAVAILABLE');
+    set('reading.precipAmounts[1] = null');
+    assert.equal(set(`precipitationTiming(${start * 1000}, false)`), 'UNAVAILABLE');
+    set('reading.precipAmounts[1] = 0; reading.precipTimes = reading.precipTimes.map(function(t) {return t + 7200;})');
+    assert.equal(set(`precipitationTiming(${start * 1000}, false)`), 'UNAVAILABLE');
+    // Move a complete series across the local midnight boundary.
+    set('reading.precipTimes = reading.precipTimes.map(function(t, i) {return reading.dayTime + 85500 + i * 900;})');
+    assert.equal(set('precipitationTiming((reading.dayTime + 85500) * 1000, false)'), '~1.5 HR');
+});
+
+test('rejects malformed forecast series and wrong precipitation units', async () => {
+    for (const mutate of [
+        p => {p.minutely_15.time[2] += 60;},
+        p => {p.minutely_15.precipitation.pop();},
+        p => {p.minutely_15.precipitation[1] = -1;},
+        p => {p.minutely_15_units.precipitation = 'mm';}
+    ]) {
+        const s = boot();
+        await settle();
+        const saved = s.cached;
+        mutate(s.payload);
+        s.now += 900000;
+        s.tick();
+        await settle();
+        assert.equal(s.cached, saved);
+        assert.match(element(s, 'back-time').text, /OLD/);
+    }
+});
+
+test('ZIP is upper right, Fahrenheit follows digits, stale icon replaces weather on every page', async () => {
+    const s = boot();
+    await settle();
+    const bitmap = (page, old) => vm.runInContext(
+        `frontBitmap(${epoch + page * 10000}, ${old}, true)`, s.context).trimEnd().split('\n').slice(9);
+    const region = (rows, x, y, w, h) => rows.slice(y,y+h).map(row => row.slice(x,x+w)).join('');
+    const current = bitmap(0, false);
+    assert.match(region(current,53,0,19,5), /B/);
+    assert.match(region(current,36,1,3,5), /C/);
+    assert.doesNotMatch(region(current,39,0,14,5), /[WCB]/);
+    for (let page = 0; page < 5; page++) {
+        const fresh = bitmap(page, false), old = bitmap(page, true);
+        assert.notEqual(region(fresh,0,0,16,16), region(old,0,0,16,16));
+        assert.match(region(old,0,0,16,16), /Y/);
+        assert.doesNotMatch(region(old,0,0,16,16), /[WCBMR]/);
+        if (page !== 4) assert.equal(region(fresh,20,0,52,16), region(old,20,0,52,16));
+    }
 });
