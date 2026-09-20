@@ -7,11 +7,11 @@ const path = require('node:path');
 const root = path.join(__dirname, '../device-apps/app.ntwrknrd.weather');
 const source = fs.readFileSync(path.join(root, 'scripts/main.js'), 'utf8');
 const epoch = 1800000000000;
-const good = {current: {temperature_2m: 78.2, weather_code: 0, is_day: 1, time: epoch / 1000},
+const good = {current: {temperature_2m: 78.2, weather_code: 0, is_day: 1, wind_speed_10m: 6.4, relative_humidity_2m: 65, time: epoch / 1000},
     utc_offset_seconds: -14400,
-    current_units: {temperature_2m: '\u00b0F'},
-    daily_units: {temperature_2m_max: '\u00b0F', temperature_2m_min: '\u00b0F'},
-    daily: {temperature_2m_max: [82.5], temperature_2m_min: [64.1],
+    current_units: {temperature_2m: '\u00b0F', wind_speed_10m: 'mp/h', relative_humidity_2m: '%'},
+    daily_units: {temperature_2m_max: '\u00b0F', temperature_2m_min: '\u00b0F', precipitation_probability_max: '%', precipitation_sum: 'inch'},
+    daily: {precipitation_probability_max: [40], precipitation_sum: [0.12], temperature_2m_max: [82.5], temperature_2m_min: [64.1],
         time: [Math.floor((epoch / 1000 - 14400) / 86400) * 86400 + 14400]}};
 const settle = () => new Promise(resolve => setImmediate(resolve));
 const element = (s, id) => s.draws.at(-1).elements.find(e => e.id === id);
@@ -59,7 +59,7 @@ test('fetches without Response.ok/status, renders values, refreshes at 15 minute
     assert.equal(JSON.parse(s.cached).temperature, 78.2);
     assert.match(element(s, 'front').data, /^! XPM2\n72 16 7 1/);
     assert.match(s.url, /latitude=39.9712&longitude=-86.1245/);
-    assert.equal(s.cacheKey, 'forecast-v2-46032');
+    assert.equal(s.cacheKey, 'forecast-v3-46032');
     assert.equal(JSON.parse(s.cached).temperature, 78.2);
     s.now += 899999;
     s.tick();
@@ -173,4 +173,71 @@ test('wrong-location cache is discarded and yesterday highs/lows are hidden', as
     await settle();
     assert.match(element(live, 'back-day').text, /unavailable/);
     assert.match(element(live, 'back-time').text, /OLD/);
+});
+
+
+test('rotates wind, humidity and whole-day precipitation with explicit units', async () => {
+    const s = boot();
+    await settle();
+    assert.match(s.url, /wind_speed_unit=mph&precipitation_unit=inch/);
+    const cached = JSON.parse(s.cached);
+    assert.equal(cached.wind, 6.4);
+    assert.equal(cached.humidity, 65);
+    assert.equal(cached.precipChance, 40);
+    assert.equal(cached.precipTotal, 0.12);
+    const frames = new Set([element(s, 'front').data]);
+    for (const [seconds, expected] of [[10, /today/], [20, /Wind: 6 mph/],
+        [30, /Rel. humidity: 65%/], [40, /Peak hourly: 40%/]]) {
+        s.now = epoch + seconds * 1000;
+        s.tick();
+        await settle();
+        assert.match(element(s, 'back-day').text, expected);
+        frames.add(element(s, 'front').data);
+    }
+    assert.equal(frames.size, 5);
+    assert.equal(element(s, 'back-total').text, 'Today total: 0.12 in');
+    s.failure = true;
+    s.now = epoch + 86440000;
+    s.tick();
+    await settle();
+    assert.equal(element(s, 'back-day').text, 'Precip: unavailable');
+    assert.equal(element(s, 'back-total').text, ' ');
+});
+
+test('rejects missing, out-of-range and wrong-unit detail fields without losing cache', async () => {
+    for (const mutate of [
+        p => {p.current.relative_humidity_2m = null;},
+        p => {p.current.relative_humidity_2m = 101;},
+        p => {p.current.wind_speed_10m = -1;},
+        p => {p.daily.precipitation_probability_max[0] = 101;},
+        p => {p.daily.precipitation_sum[0] = -0.1;},
+        p => {p.daily.precipitation_sum[0] = null;},
+        p => {p.current_units.wind_speed_10m = 'km/h';},
+        p => {p.daily_units.precipitation_sum = 'mm';}
+    ]) {
+        const s = boot();
+        await settle();
+        const saved = s.cached;
+        mutate(s.payload);
+        s.now += 900000;
+        s.tick();
+        await settle();
+        assert.equal(s.cached, saved);
+        assert.match(element(s, 'back-time').text, /OLD/);
+    }
+});
+
+test('zero wind, humidity and precipitation are valid, legacy cache is rejected', async () => {
+    const s = boot();
+    s.payload.current.wind_speed_10m = 0;
+    s.payload.current.relative_humidity_2m = 0;
+    s.payload.daily.precipitation_probability_max[0] = 0;
+    s.payload.daily.precipitation_sum[0] = 0;
+    await settle();
+    assert.equal(JSON.parse(s.cached).precipTotal, 0);
+    const legacy = JSON.parse(s.cached);
+    delete legacy.humidity;
+    const restarted = boot({cached: JSON.stringify(legacy), failure: true});
+    await settle();
+    assert.equal(element(restarted, 'current').text, 'CARMEL');
 });

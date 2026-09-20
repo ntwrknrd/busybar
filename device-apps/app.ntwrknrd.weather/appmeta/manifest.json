@@ -2,7 +2,7 @@
   "format_version": 1,
   "id": "app.ntwrknrd.weather",
   "name": "Carmel Weather",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Weather for Carmel 46032, powered by Open-Meteo",
   "author": "ntwrknrd",
   "heap_size_kib": 128,

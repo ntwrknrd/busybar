@@ -12,18 +12,22 @@ credentials or personal location. Display requests use `127.0.0.1`; the official
 example's USB address did not work with USB networking unavailable.
 
 The front display alternates an original colored weather icon with current
-Fahrenheit temperature/conditions and a ZIP-labeled high/low view. The rear screen
+Fahrenheit temperature/conditions and a ZIP-labeled high/low view, followed by wind speed (mph), relative humidity
+(%), and precipitation. Each view lasts 10 seconds. Precipitation shows today's
+maximum hourly probability (%) and forecast total (inches, including rain and
+snow water equivalent); these cover the entire local day, not just remaining
+hours. Rear-screen labels clarify the peak-hourly probability and daily total. The rear screen
 shows the city, ZIP, source, and model timestamp. Weather codes distinguish mainly
 clear, partly cloudy, and overcast; clear nights use a moon rather than a sun.
 Each front view is a single XPM bitmap, so text and icons update together; the
 renderer reuses this repository's pixel alphabet.
 
 Successful forecasts refresh every 15 minutes and persist in `localStorage`,
-separately from the retired downtown Indianapolis cache. Current conditions are
+in a versioned ZIP-specific cache; older caches without the new fields are ignored. Current conditions are
 Open-Meteo model estimates, not thermometer observations. High/low values are
 today's forecast extrema, not the day's observed extrema. Newly fetched model
 data older than 30 minutes is rejected; yesterday's high/low is never shown as
-today's. Cached readings get an `OLD` marker until a fresh request succeeds.
+today's; the same guard hides yesterday's precipitation forecast. Cached readings get an `OLD` marker until a fresh request succeeds.
 Failures retry after one minute. This prototype omits forecast graphs.
 
 ## Install and launch
@@ -87,3 +91,11 @@ compared with approximately 82/87/70 for the old downtown coordinates.
 The icon-led arrangement takes inspiration from the community Weather Forecast
 app; the JavaScript renderer and pixel artwork here are original. That reference
 is a host-run Python app, while this app continues to run directly on the Bar.
+
+The September 20 detail-page update was installed and read back on firmware
+1.2.4. A full rotation captured on both displays verified wind speed, humidity,
+and daily precipitation probability/total alongside the original two views.
+The live response showed 8.2 mph wind, 79% relative humidity, 43% peak hourly
+precipitation probability, and 1.094 inches forecast for the whole day. Thirteen
+JavaScript tests and 53 Python tests pass, including new field validation and
+hiding previous-day precipitation.

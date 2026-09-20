@@ -12,7 +12,13 @@ custom firmware is no longer the first step for standalone apps.
 - [x] Verify on-device launch, live fetch, rendering, exit, and relaunch.
 - [ ] Complete an extended on-device refresh soak.
 - [ ] Verify cached weather during a real Wi-Fi outage.
-- [ ] Add forecast pages after the standalone prototype is verified.
+- [x] Add wind speed, relative humidity, and daily precipitation forecast pages.
+- [ ] Evaluate WeatherKit using the existing Apple Developer membership: create a
+      Services ID and WeatherKit key, compare current conditions and daily high/low
+      for ZIP 46032 with Apple Weather, then consider a homelab relay for HTTPS and
+      signed authentication. Keep the private key outside the repository and Bar;
+      include Apple's required attribution. Open-Meteo remains the current source.
+- [ ] Add further forecast pages after the standalone prototype is verified.
 
 ## Interactive Stock Navigation
 
