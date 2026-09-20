@@ -138,7 +138,7 @@ function sameForecastDay(now, value) {
 }
 
 function pageIndex(now) {
-    return Math.floor((now - startedAt) / 10000) % 5;
+    return Math.floor((now - startedAt) / 10000) % 6;
 }
 
 const PIXEL_FONT = {"A":"010101111101101","B":"110101110101110","C":"011100100100011","D":"110101101101110","E":"111100110100111","F":"111100110100100","G":"011100101101011","H":"101101111101101","I":"111010010010111","J":"001001001101010","K":"101101110101101","L":"100100100100111","M":"101111111101101","N":"101111111111101","O":"010101101101010","P":"110101110100100","Q":"010101101111011","R":"110101110101101","S":"011100010001110","T":"111010010010010","U":"101101101101111","V":"101101101101010","W":"101101111111101","X":"101101010101101","Y":"101101010010010","Z":"111001010100111","0":"111101101101111","1":"010110010010111","2":"110001010100111","3":"110001010001110","4":"101101111001001","5":"111100110001110","6":"011100111101111","7":"111001010010010","8":"111101111101111","9":"111101111001110","+":"000010111010000","-":"000000111000000",".":"000000000000010","^":"010101000000000","/":"001001010100100","~":"000000010101000","%":"101001010100101","?":"110001010000010"," ":"000000000000000"};
@@ -166,22 +166,12 @@ function frontBitmap(now, old, today) {
         label("CARMEL",1,1,"W",1);
         label("46032 LOADING",1,10,"B",1);
     } else {
-        // Left column: 11-pixel icon, one-pixel gap, four-pixel ZIP.
+        // Keep the original 16x16 icon artwork at native size, without resampling.
         if (old) {
-            label("?",6,0,"Y",2);
+            label("?",5,3,"Y",2);
         } else {
             const iconRows = weatherIcon(reading.code, reading.isDay).split("\n").slice(9,25);
-            for (let y = 0; y < 11; y++) for (let x = 0; x < 18; x++) {
-                dot(x,y,iconRows[Math.floor(y*16/11)][Math.floor(x*16/18)]);
-            }
-        }
-        // Compact four-row digits keep ZIP readable without crowding the icon.
-        const zipDigits = ["101101111001", "100111101111", "111101101111",
-            "111011001111", "110011100111"];
-        for (let n = 0; n < zipDigits.length; n++) {
-            for (let y = 0; y < 4; y++) for (let x = 0; x < 3; x++) {
-                if (zipDigits[n][y*3+x] === "1") dot(n*4+x,y+12,"C");
-            }
+            for (let y = 0; y < 16; y++) for (let x = 0; x < 16; x++) dot(x,y,iconRows[y][x]);
         }
         function value(number, color) {
             label(number,22,0,color,number.length <= 3 ? 2 : 1,3);
@@ -202,9 +192,8 @@ function frontBitmap(now, old, today) {
             value(String(Math.round(reading.wind)),"W");
             description("WIND","MPH");
         } else if (page === 3) {
-            label("HUMIDITY",21,5,"B",1);
-            const humidity = String(Math.round(reading.humidity)) + " %";
-            label(humidity,73 - humidity.length*4,5,"W",1);
+            value(String(Math.round(reading.humidity)),"W");
+            description("HUMID","%");
         } else if (page === 4) {
             const timing = precipitationTiming(now, old);
             if (timing[0] === "~") {
@@ -215,6 +204,9 @@ function frontBitmap(now, old, today) {
                 value(timing === "UNAVAILABLE" ? "?" : timing === "NONE 24H" ? "NONE" : "NOW","W");
                 description("PRECIP",timing === "NONE 24H" ? "24H" : timing === "UNAVAILABLE" ? "N/A" : "");
             }
+        } else if (page === 5) {
+            label("46032",20,0,"W",2,3);
+            label("ZIP",61,5,"B",1);
         } else {
             const temperature = String(Math.round(reading.temperature));
             value(temperature,"W");
@@ -254,6 +246,7 @@ function displayElements(now) {
     const page = pageIndex(now);
     if (page === 2) detail = "Wind: " + Math.round(reading.wind) + " mph";
     if (page === 3) detail = "Rel. humidity: " + Math.round(reading.humidity) + "%";
+    if (page === 5) detail = "Location: ZIP 46032";
     if (page === 4) detail = "Next: " + precipitationTiming(now, old);
     elements.push(text("back-day", detail, 4, 52, "small", white, "back"));
     elements.push(text("back-total", page === 4 && today ?

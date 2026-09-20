@@ -13,13 +13,12 @@ example's USB address did not work with USB networking unavailable.
 
 The front display rotates through current temperature/conditions, high/low,
 wind speed (mph), relative humidity (%), and the next precipitation forecast.
-Each view lasts 10 seconds. ZIP 46032 sits beneath the compact weather icon
-in the left column of every page. The icon occupies 11 rows, followed by a gap and four-row ZIP digits. Most values
-use nearly the full display height, with compact descriptions and units to their
-right. Humidity instead shows centered `HUMIDITY` with a right-aligned percentage
-(such as `77 %`) on the same line. Fahrenheit remains beside
-the temperature digits. A yellow question mark replaces the icon on stale pages
-while the ZIP remains visible.
+Each view lasts 10 seconds, with ZIP 46032 on a dedicated sixth page. The weather
+icon has its own full 16x16 area at the left, preserving the original artwork
+without resizing. Values use nearly the full display height, with compact labels
+and units to the right. Humidity again uses a large value with `HUMID` and `%`
+beside it. Fahrenheit remains beside the temperature digits. A yellow question
+mark replaces the icon on stale pages.
 Each front view is a single XPM bitmap, so text and icons update together; the
 renderer reuses this repository's pixel alphabet.
 

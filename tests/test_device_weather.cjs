@@ -203,6 +203,12 @@ test('rotates wind, humidity and whole-day precipitation with explicit units', a
     }
     assert.equal(frames.size, 5);
     assert.equal(element(s, 'back-total').text, 'Today total: 0.12 in');
+    s.now = epoch + 50000;
+    s.tick();
+    await settle();
+    frames.add(element(s, 'front').data);
+    assert.equal(frames.size, 6);
+    assert.equal(element(s, 'back-day').text, 'Location: ZIP 46032');
     s.failure = true;
     s.now = epoch + 86440000;
     s.tick();
@@ -292,22 +298,23 @@ test('rejects malformed forecast series and wrong precipitation units', async ()
     }
 });
 
-test('ZIP sits below the icon, tall values and right labels remain clear when stale', async () => {
+test('native icon has its own space on all six pages, including dedicated ZIP', async () => {
     const s = boot();
     await settle();
     const bitmap = (page, old) => vm.runInContext(
         `frontBitmap(${epoch + page * 10000}, ${old}, true)`, s.context).trimEnd().split('\n').slice(9);
     const region = (rows, x, y, w, h) => rows.slice(y,y+h).map(row => row.slice(x,x+w)).join('');
     const current = bitmap(0, false);
-    assert.match(region(current,0,12,19,4), /C/);
+    const originalIcon = vm.runInContext("weatherIcon(0, 1)", s.context).trimEnd().split("\n").slice(9).join("");
     assert.match(region(current,37,0,3,5), /C/);
     assert.doesNotMatch(region(current,44,0,4,16), /[WCB]/);
-    for (let page = 0; page < 5; page++) {
+    for (let page = 0; page < 6; page++) {
         const fresh = bitmap(page, false), old = bitmap(page, true);
-        assert.notEqual(region(fresh,0,0,19,10), region(old,0,0,19,10));
-        assert.match(region(old,0,0,19,10), /Y/);
-        assert.equal(region(fresh,0,12,19,4), region(old,0,12,19,4));
-        assert.doesNotMatch(region(old,0,0,19,10), /[WCBMR]/);
+        assert.notEqual(region(fresh,0,0,16,16), region(old,0,0,16,16));
+        assert.match(region(old,0,0,16,16), /Y/);
+        assert.equal(region(fresh,0,0,16,16), originalIcon);
+        assert.equal(region(fresh,16,0,4,16), ".".repeat(64));
+        assert.doesNotMatch(region(old,0,0,16,16), /[WCBMR]/);
         if (page !== 4) assert.equal(region(fresh,20,0,52,16), region(old,20,0,52,16));
     }
 });
