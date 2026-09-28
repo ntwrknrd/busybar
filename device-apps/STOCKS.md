@@ -5,9 +5,11 @@ Finance's unofficial chart endpoint directly over HTTPS; no Mac relay or API key
 is required. A hardware probe verified HTTPS and JSON parsing before installation.
 
 The app uses the existing CLI's 31-symbol default watchlist, including indices
-and mutual funds. Each symbol gets ten seconds: price/change for five seconds,
-then an intraday sparkline for five seconds. Mutual funds without intraday data
-keep their price view and are labeled `DAILY NAV`. Change is relative to the
+and mutual funds. Each symbol gets ten seconds in one stable layout: ticker at upper left,
+percentage change at bottom left, and an intraday sparkline using all 16 rows
+on the right. The front has no separate price or market-status view; those
+details remain on the rear. Symbols without enough chart points show `NO CHART`,
+or `DAILY NAV` for mutual funds. Change is relative to the
 provider's previous close, not the chart's first sample. Prices use Yahoo's
 reported currency; quote timestamps on the rear screen are explicitly UTC.
 

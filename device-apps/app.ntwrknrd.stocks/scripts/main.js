@@ -71,19 +71,16 @@ function front(symbol, q, now) {
         label("YAHOO FINANCE",0,10,"C",1);
     } else {
         const status=state(q,now), c=status==="STALE"?"Y":change(q)>=0?"G":"R";
-        if(q.fund || Math.floor((now-startedAt)/5000)%2===0) {
-            label(frontPercent(q),0,10,c,1);
-            const price=q.price.toFixed(2);
-            label(price,26,0,"W",price.length<=6?2:1);
-            label(status==="DAILY NAV"?"NAV "+q.currency:q.currency+" "+status,26,11,status==="STALE"?"Y":"C",1);
+        label(frontPercent(q),0,11,c,1);
+        if(q.points.length < 2) {
+            label(q.fund?"DAILY":"NO",28,2,"C",1);
+            label(q.fund?"NAV":"CHART",28,10,"C",1);
         } else {
-            const delta=percent(q);
-            label(delta,72-(delta.length*4-1),0,c,1);
             const min=Math.min.apply(null,q.points), max=Math.max.apply(null,q.points);
             let last=null;
-            for(let x=0;x<72;x++) {
-                const v=q.points[Math.floor(x*(q.points.length-1)/71)];
-                const y=max===min?11:15-Math.round((v-min)/(max-min)*8);
+            for(let x=28;x<72;x++) {
+                const v=q.points[Math.floor((x-28)*(q.points.length-1)/43)];
+                const y=max===min?8:15-Math.round((v-min)/(max-min)*15);
                 if(last!==null) for(let j=Math.min(last,y);j<=Math.max(last,y);j++) dot(x,j,c);
                 dot(x,y,c);last=y;
             }
