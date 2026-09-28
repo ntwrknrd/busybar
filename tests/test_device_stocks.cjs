@@ -99,22 +99,22 @@ test('rejected display frames do not advance the reveal',async()=>{
 });
 
 
-test('rising intraday chart can remain below the previous-close reference',async()=>{
+test('rising intraday chart starts at previous close and ends lower for a daily loss',async()=>{
  const s=boot();await settle();
  run(s,'quotes.AAPL.points=[95,96,97]; quotes.AAPL.price=98; quotes.AAPL.previous=100');
  const rows=run(s,'front("AAPL",quotes.AAPL,Date.now())').trimEnd().split('\n').slice(8);
  assert.equal(run(s,'percent(quotes.AAPL)'),'-2.00%');
- assert.ok(rows[0].slice(28).includes('C'));
- assert.ok(!rows[0].slice(28).includes('R'));
- assert.equal(rows[15][28],'R');
+ assert.equal(rows[0][28],'R');
+ assert.ok(rows.every(r=>!r.slice(28).includes('C')));
  assert.equal(rows[6][71],'R');
 });
 
-test('chart reference includes yesterday close above and below intraday range',async()=>{
+test('chart starts at previous close for gains and handles unchanged prices',async()=>{
  const s=boot();await settle();
  run(s,'quotes.AAPL.points=[103,104]; quotes.AAPL.price=106; quotes.AAPL.previous=100');
  const rows=run(s,'front("AAPL",quotes.AAPL,Date.now())').trimEnd().split('\n').slice(8);
- assert.ok(rows[15].slice(28).includes('C'));
+ assert.equal(rows[15][28],'G');
+ assert.ok(rows.every(r=>!r.slice(28).includes('C')));
  assert.equal(rows[0][71],'G');
  run(s,'quotes.AAPL.points=[100,100]; quotes.AAPL.price=100');
  assert.ok(run(s,'front("AAPL",quotes.AAPL,Date.now())').split('\n')[16].slice(28).includes('G'));

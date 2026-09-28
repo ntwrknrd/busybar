@@ -13,10 +13,9 @@ ticker and percentage remain visible. The front has no separate price or
 market-status view; those
 details remain on the rear. Symbols without enough chart points show `NO CHART`,
 or `DAILY NAV` for mutual funds. Change is relative to the
-provider's previous close, not the chart's first sample. The dotted gray line marks
-that previous close, and the chart scale includes it. The final point uses the
-same quoted price as the percentage. A stock can rise from its opening level
-while remaining below yesterday's close. Prices use Yahoo's
+provider's previous close. The chart starts at that same close, follows today's
+prices, and ends at the quoted price used by the percentage. Its initial segment
+includes the overnight gap. No reference line is drawn. Prices use Yahoo's
 reported currency; quote timestamps on the rear screen are explicitly UTC.
 
 Requests run sequentially, at most one per five-second tick. The next symbol is

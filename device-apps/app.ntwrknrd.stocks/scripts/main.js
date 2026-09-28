@@ -101,13 +101,10 @@ function front(symbol, q, now) {
             label(q.fund?"DAILY":"NO",28,2,"C",1);
             label(q.fund?"NAV":"CHART",28,10,"C",1);
         } else {
-            // Include the same previous close used by the percentage, and end at
-            // the quoted price rather than an older five-minute candle.
-            const series=q.points.slice();series.push(q.price);
-            const min=Math.min(q.previous,Math.min.apply(null,series));
-            const max=Math.max(q.previous,Math.max.apply(null,series));
-            const baseline=max===min?8:15-Math.round((q.previous-min)/(max-min)*15);
-            for(let x=28;x<72;x+=3) dot(x,baseline,"C");
+            // Start at the percentage baseline, then show today's prices.
+            // The first segment includes the overnight gap.
+            const series=[q.previous].concat(q.points);series.push(q.price);
+            const min=Math.min.apply(null,series), max=Math.max.apply(null,series);
             let last=null;
             for(let x=28;x<72;x++) {
                 const v=series[Math.floor((x-28)*(series.length-1)/43)];
@@ -129,7 +126,7 @@ function elements(now, reveal, index) {
     e.push(text("price",q?q.price.toFixed(2)+" "+q.currency+"  "+percent(q):"Waiting for quote",18));
     e.push(text("state",q?state(q,now):failed[symbol]?"Fetch failed; retrying":"Loading watchlist",34));
     e.push(text("stamp",q?"Quote UTC "+new Date(q.quoteTime).toISOString().slice(5,16).replace("T"," "):" ",50));
-    e.push(text("range",q&&q.fund?"Daily NAV / prior close":"Dotted: prior close",66));
+    e.push(text("range",q&&q.fund?"Daily NAV / prior close":"Start: prior close",66));
     if(reveal && q && q.points.length>=2) e.push({id:"reveal",type:"animation",
         path:"scripts/reveal.anim",x:28,y:0,z_index:1,align:"top_left",loop:false,timeout:2});
     return e;
@@ -172,7 +169,7 @@ function refresh() {
     .then(function(){fetching=false;draw();});
 }
 preparePages();
-console.info("Stocks 0.3.3 started");
+console.info("Stocks 0.3.4 started");
 draw();refresh();
 setInterval(refresh,5000);
 setInterval(draw,250);
