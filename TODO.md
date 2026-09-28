@@ -51,3 +51,17 @@ Use only the normal signed `flash_usb` path for the first prototype. Avoid
 signing configuration. If a custom image no longer boots far enough to expose
 the USB updater, recovery requires SWD access, partial disassembly, and the BSB
 debug board.
+
+## On-Device JavaScript Stocks
+
+- [x] Verify direct Yahoo HTTPS on official firmware 1.2.4.
+- [x] Port the existing watchlist with price/change views and intraday charts.
+- [x] Cache quotes and distinguish stale data, closed sessions, and daily fund NAVs.
+- [ ] Diagnose the reproduced firmware 1.2.4 reboot: internal intercom lost sync,
+  supervisor error `0x4`, and Wi-Fi deinitialization. Trigger remains unknown;
+  preserve `/ext/intercom_failure_log.txt` before the next failure.
+- [x] Capture the reboot over USB and compare rendering, fetching, and serialized
+  requests; see [investigation](plans/2026-09-28-stocks-reboot-investigation.md).
+- [ ] Validate the no-animation mitigation across longer runs and real network
+  outages; restore the reveal only after its interaction with firmware is understood.
+- [ ] Reassess JavaScript physical-input support before wheel navigation.

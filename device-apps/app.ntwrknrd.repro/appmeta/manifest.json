@@ -1,0 +1,10 @@
+{
+  "format_version": 1,
+  "id": "app.ntwrknrd.repro",
+  "name": "Repro Test",
+  "version": "0.1.0",
+  "description": "Isolated animation and HTTPS experiment",
+  "author": "ntwrknrd",
+  "heap_size_kib": 256,
+  "debug": false
+}
