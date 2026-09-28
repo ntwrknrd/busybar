@@ -57,5 +57,8 @@ debug board.
 - [x] Verify direct Yahoo HTTPS on official firmware 1.2.4.
 - [x] Port the existing watchlist with price/change views and intraday charts.
 - [x] Cache quotes and distinguish stale data, closed sessions, and daily fund NAVs.
+- [ ] Diagnose the reproduced firmware 1.2.4 reboot: internal intercom lost sync,
+  supervisor error `0x4`, and Wi-Fi deinitialization. Trigger remains unknown;
+  preserve `/ext/intercom_failure_log.txt` before the next failure.
 - [ ] Complete a full on-device refresh soak and real network-outage test.
 - [ ] Reassess JavaScript physical-input support before wheel navigation.

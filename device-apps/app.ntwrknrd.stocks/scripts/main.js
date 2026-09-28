@@ -10,7 +10,7 @@ let fetching = false, drawing = false, cursor = 0;
 let sceneSymbol = null, lastDrawAt = 0;
 // Hold the last frame through slow requests; stopped apps still expire.
 const DISPLAY_TIMEOUT = 60;
-const startedAt = Date.now();
+let currentIndex = 0, displayedAt = null;
 
 function number(n) { return typeof n === "number" && isFinite(n); }
 function valid(q, symbol) {
@@ -55,7 +55,10 @@ function frontPercent(q) {
     const n=change(q), sign=n>=0?"+":"-", a=Math.abs(n);
     return sign+(a>999?"999":a>=100?a.toFixed(0):a>=10?a.toFixed(1):a.toFixed(2))+"%";
 }
-function selection(now) {return Math.floor((now-startedAt)/10000)%SYMBOLS.length;}
+function selection(now) {
+    const next=(currentIndex+1)%SYMBOLS.length;
+    return displayedAt!==null && now-displayedAt>=10000 && quotes[SYMBOLS[next]]?next:currentIndex;
+}
 function front(symbol, q, now) {
     const pixels = [];
     for (let i=0;i<72*16;i++) pixels.push(".");
@@ -79,10 +82,16 @@ function front(symbol, q, now) {
             label(q.fund?"DAILY":"NO",28,2,"C",1);
             label(q.fund?"NAV":"CHART",28,10,"C",1);
         } else {
-            const min=Math.min.apply(null,q.points), max=Math.max.apply(null,q.points);
+            // Include the same previous close used by the percentage, and end at
+            // the quoted price rather than an older five-minute candle.
+            const series=q.points.slice();series.push(q.price);
+            const min=Math.min(q.previous,Math.min.apply(null,series));
+            const max=Math.max(q.previous,Math.max.apply(null,series));
+            const baseline=max===min?8:15-Math.round((q.previous-min)/(max-min)*15);
+            for(let x=28;x<72;x+=3) dot(x,baseline,"C");
             let last=null;
             for(let x=28;x<72;x++) {
-                const v=q.points[Math.floor((x-28)*(q.points.length-1)/43)];
+                const v=series[Math.floor((x-28)*(series.length-1)/43)];
                 const y=max===min?8:15-Math.round((v-min)/(max-min)*15);
                 if(last!==null) for(let j=Math.min(last,y);j<=Math.max(last,y);j++) dot(x,j,c);
                 dot(x,y,c);last=y;
@@ -94,38 +103,42 @@ function front(symbol, q, now) {
     return data;
 }
 function text(id,value,y) {return {id:id,type:"text",text:value||" ",x:3,y:y,font:"small",color:"#FFFFFFFF",align:"top_left",display:"back",timeout:DISPLAY_TIMEOUT};}
-function elements(now, reveal) {
-    const symbol=SYMBOLS[selection(now)], q=quotes[symbol];
+function elements(now, reveal, index) {
+    const symbol=SYMBOLS[index===undefined?selection(now):index], q=quotes[symbol];
     const e=[{id:"front",type:"xpmbitmap",data:front(symbol,q,now),x:0,y:0,z_index:0,align:"top_left",timeout:DISPLAY_TIMEOUT},
         text("source",symbol+" / Yahoo Finance",2)];
     e.push(text("price",q?q.price.toFixed(2)+" "+q.currency+"  "+percent(q):"Waiting for quote",18));
     e.push(text("state",q?state(q,now):failed[symbol]?"Fetch failed; retrying":"Loading watchlist",34));
     e.push(text("stamp",q?"Quote UTC "+new Date(q.quoteTime).toISOString().slice(5,16).replace("T"," "):" ",50));
-    e.push(text("range",q&&q.fund?"Daily NAV / prior close":"1D / vs prior close",66));
+    e.push(text("range",q&&q.fund?"Daily NAV / prior close":"Dotted: prior close",66));
     if(reveal && q && q.points.length>=2) e.push({id:"reveal",type:"animation",
         path:"scripts/reveal.anim",x:28,y:0,z_index:1,align:"top_left",loop:false,timeout:2});
     return e;
 }
 function draw() {
     if(drawing)return;
-    const now=Date.now(), symbol=SYMBOLS[selection(now)];
+    const now=Date.now(), index=selection(now), symbol=SYMBOLS[index];
     const changed=symbol!==sceneSymbol;
-    if(!changed && now-lastDrawAt<5000)return;
+    if(!changed && now-lastDrawAt<5000 && !(displayedAt===null && quotes[symbol]))return;
+    const ready=!!quotes[symbol];
     drawing=true;
     fetch("http://127.0.0.1/api/display/draw",{method:"POST",headers:{"Content-Type":"application/json"},
-        body:JSON.stringify({application_name:APP_ID,priority:50,elements:elements(now,changed)})})
+        body:JSON.stringify({application_name:APP_ID,priority:50,elements:elements(now,changed,index)})})
     .then(function(r){return r.json();}).then(function(b){
         if(b.result!=="OK")throw new Error("Display rejected");
-        sceneSymbol=symbol;lastDrawAt=now;
+        if(ready && (changed || displayedAt===null)) displayedAt=Date.now();
+        currentIndex=index;sceneSymbol=symbol;lastDrawAt=now;
     })
-    .catch(function(){console.error("Display unavailable");lastDrawAt=now;})
+    .catch(function(error){console.error("Display unavailable: "+String(error));lastDrawAt=now;})
     .then(function(){drawing=false;});
 }
 function refresh() {
     if(fetching)return;
     const now=Date.now();
-    let symbol=null;
-    for(let i=0;i<SYMBOLS.length;i++) {
+    // Get the first page ready, then prefetch the next page before background work.
+    const wanted=SYMBOLS[quotes[SYMBOLS[currentIndex]]?(currentIndex+1)%SYMBOLS.length:currentIndex];
+    let symbol=!due[wanted]||now>=due[wanted]?wanted:null;
+    for(let i=0;!symbol && i<SYMBOLS.length;i++) {
         const candidate=SYMBOLS[cursor];cursor=(cursor+1)%SYMBOLS.length;
         if(!due[candidate]||now>=due[candidate]){symbol=candidate;break;}
     }
@@ -136,14 +149,15 @@ function refresh() {
     .then(function(r){return r.json();}).then(function(body){
         const q=parse(body,symbol,Date.now());quotes[symbol]=q;failed[symbol]=false;
         due[symbol]=Date.now()+REFRESH_MS;
-        try{localStorage.setItem("quote-v1-"+symbol,JSON.stringify(q));}catch(_){console.error("Cache write failed");}
-    }).catch(function(){failed[symbol]=true;due[symbol]=Date.now()+60000;console.error("Quote failed: "+symbol);})
+        try{localStorage.setItem("quote-v1-"+symbol,JSON.stringify(q));}catch(error){console.error("Cache write failed: "+String(error));}
+    }).catch(function(error){failed[symbol]=true;due[symbol]=Date.now()+60000;console.error("Quote failed: "+symbol+": "+String(error));})
     .then(function(){fetching=false;draw();});
 }
 SYMBOLS.forEach(function(symbol){
     try {const q=JSON.parse(localStorage.getItem("quote-v1-"+symbol));if(valid(q,symbol)){quotes[symbol]=q;failed[symbol]=true;}}
     catch(_){console.error("Cache unavailable: "+symbol);}
 });
+console.info("Stocks 0.3.2 started");
 draw();refresh();
 setInterval(refresh,5000);
 setInterval(draw,250);
