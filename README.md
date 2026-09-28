@@ -118,3 +118,9 @@ bounded backoff after a connection fails and checks every 30 seconds for a
 better transport in the background, preferring USB over LAN and LAN over BUSY
 Cloud. Pass `--verbose` to report those periodic health checks. Stop the monitor
 with `Ctrl-C`.
+
+## Standalone stocks prototype
+
+An experimental [on-device stocks app](device-apps/STOCKS.md) fetches quotes over
+Wi-Fi and rotates the existing watchlist without a continuously running Mac.
+It targets official firmware 1.2.4 and preserves the host CLI above.

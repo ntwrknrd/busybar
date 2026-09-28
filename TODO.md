@@ -51,3 +51,11 @@ Use only the normal signed `flash_usb` path for the first prototype. Avoid
 signing configuration. If a custom image no longer boots far enough to expose
 the USB updater, recovery requires SWD access, partial disassembly, and the BSB
 debug board.
+
+## On-Device JavaScript Stocks
+
+- [x] Verify direct Yahoo HTTPS on official firmware 1.2.4.
+- [x] Port the existing watchlist with price/change views and intraday charts.
+- [x] Cache quotes and distinguish stale data, closed sessions, and daily fund NAVs.
+- [ ] Complete a full on-device refresh soak and real network-outage test.
+- [ ] Reassess JavaScript physical-input support before wheel navigation.
