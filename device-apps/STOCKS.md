@@ -99,3 +99,7 @@ Version 0.3.3 limits parsed chart residency to the current and next pages and
 fetches only those symbols. All saved quotes remain available on storage.
 This reduces memory and network pressure; it is a mitigation, not a confirmed
 fix for the internal communication failure.
+
+A subsequent 0.3.3 check also found the device back at Start/Setup after a screen
+request timeout. The two-chart limit therefore did not eliminate the reported
+exit. The device was left at Start rather than repeatedly relaunched.
