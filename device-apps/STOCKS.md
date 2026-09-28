@@ -7,7 +7,8 @@ is required. A hardware probe verified HTTPS and JSON parsing before installatio
 The app uses the existing CLI's 31-symbol default watchlist, including indices
 and mutual funds. Each symbol gets ten seconds in one stable layout: ticker at upper left,
 percentage change at bottom left, and an intraday sparkline using all 16 rows
-on the right. The front has no separate price or market-status view; those
+on the right. At each transition the graph draws from left to right while the
+ticker and percentage remain visible. The front has no separate price or market-status view; those
 details remain on the rear. Symbols without enough chart points show `NO CHART`,
 or `DAILY NAV` for mutual funds. Change is relative to the
 provider's previous close, not the chart's first sample. Prices use Yahoo's
@@ -24,8 +25,11 @@ fetches retain the last valid quote. Stale prices and charts use yellow.
 extended-hours prices are not requested. During a regular session, quotes older
 than 20 minutes show `DELAYED`. These labels are independent of fetch freshness.
 Yahoo is an unofficial source and may throttle requests or change its schema.
-This prototype supports daily charts only; wheel input and animated transitions
-are deferred. The JavaScript heap is 256 KiB and chart samples are capped at 72.
+The display loop is independent of quote refresh. A reusable transparent animation
+reveals the live chart over about one second using the native player, avoiding
+slow per-frame HTTP requests. Completed frames are renewed every five seconds.
+A 60-second frame lifetime tolerates short stalls without blanking the screen.
+This prototype supports daily charts only; wheel input remains deferred. The JavaScript heap is 256 KiB and chart samples are capped at 72.
 
 ## Installation
 
@@ -40,6 +44,10 @@ The installer checks serial and firmware, reads back all uploads, and refuses to
 replace a different existing install. It preserves other apps, including weather.
 Reload Apps with the mode switch and select **Stocks**, then **Start**. Stop with
 the mode switch; firmware 1.2.4 consumes Back while JavaScript is running.
+
+The bundled reveal asset can be regenerated with
+`uv run scripts/build_stock_reveal.py`. It masks only the chart region and ends
+fully transparent; it contains no quote data.
 
 ## Verification
 

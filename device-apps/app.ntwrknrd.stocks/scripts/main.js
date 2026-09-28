@@ -7,6 +7,9 @@ const quotes = {};
 const due = {};
 const failed = {};
 let fetching = false, drawing = false, cursor = 0;
+let sceneSymbol = null, lastDrawAt = 0;
+// Hold the last frame through slow requests; stopped apps still expire.
+const DISPLAY_TIMEOUT = 60;
 const startedAt = Date.now();
 
 function number(n) { return typeof n === "number" && isFinite(n); }
@@ -90,24 +93,33 @@ function front(symbol, q, now) {
     for(let y=0;y<16;y++) data+=pixels.slice(y*72,y*72+72).join("")+"\n";
     return data;
 }
-function text(id,value,y) {return {id:id,type:"text",text:value||" ",x:3,y:y,font:"small",color:"#FFFFFFFF",align:"top_left",display:"back",timeout:10};}
-function elements(now) {
+function text(id,value,y) {return {id:id,type:"text",text:value||" ",x:3,y:y,font:"small",color:"#FFFFFFFF",align:"top_left",display:"back",timeout:DISPLAY_TIMEOUT};}
+function elements(now, reveal) {
     const symbol=SYMBOLS[selection(now)], q=quotes[symbol];
-    const e=[{id:"front",type:"xpmbitmap",data:front(symbol,q,now),x:0,y:0,align:"top_left",timeout:10},
+    const e=[{id:"front",type:"xpmbitmap",data:front(symbol,q,now),x:0,y:0,z_index:0,align:"top_left",timeout:DISPLAY_TIMEOUT},
         text("source",symbol+" / Yahoo Finance",2)];
     e.push(text("price",q?q.price.toFixed(2)+" "+q.currency+"  "+percent(q):"Waiting for quote",18));
     e.push(text("state",q?state(q,now):failed[symbol]?"Fetch failed; retrying":"Loading watchlist",34));
     e.push(text("stamp",q?"Quote UTC "+new Date(q.quoteTime).toISOString().slice(5,16).replace("T"," "):" ",50));
     e.push(text("range",q&&q.fund?"Daily NAV / prior close":"1D / vs prior close",66));
+    if(reveal && q && q.points.length>=2) e.push({id:"reveal",type:"animation",
+        path:"scripts/reveal.anim",x:28,y:0,z_index:1,align:"top_left",loop:false,timeout:2});
     return e;
 }
 function draw() {
     if(drawing)return;
+    const now=Date.now(), symbol=SYMBOLS[selection(now)];
+    const changed=symbol!==sceneSymbol;
+    if(!changed && now-lastDrawAt<5000)return;
     drawing=true;
     fetch("http://127.0.0.1/api/display/draw",{method:"POST",headers:{"Content-Type":"application/json"},
-        body:JSON.stringify({application_name:APP_ID,priority:50,elements:elements(Date.now())})})
-    .then(function(r){return r.json();}).then(function(b){if(b.result!=="OK")console.error("Display rejected");})
-    .catch(function(){console.error("Display unavailable");}).then(function(){drawing=false;});
+        body:JSON.stringify({application_name:APP_ID,priority:50,elements:elements(now,changed)})})
+    .then(function(r){return r.json();}).then(function(b){
+        if(b.result!=="OK")throw new Error("Display rejected");
+        sceneSymbol=symbol;lastDrawAt=now;
+    })
+    .catch(function(){console.error("Display unavailable");lastDrawAt=now;})
+    .then(function(){drawing=false;});
 }
 function refresh() {
     if(fetching)return;
@@ -133,4 +145,5 @@ SYMBOLS.forEach(function(symbol){
     catch(_){console.error("Cache unavailable: "+symbol);}
 });
 draw();refresh();
-setInterval(function(){refresh();draw();},5000);
+setInterval(refresh,5000);
+setInterval(draw,250);

@@ -8,7 +8,7 @@ function payload(symbol='AAPL') {return {chart:{result:[{meta:{symbol,currency:'
 function boot(cache={},bad=false) {
  const s={now:epoch,cache:{...cache},draws:[],urls:[],bad};
  class Clock extends Date {static now(){return s.now;}}
- s.ctx=vm.createContext({Date:Clock,console:{info(){},error(){}},localStorage:{getItem:k=>s.cache[k]||null,setItem:(k,v)=>{if(s.diskFail)throw Error('full');s.cache[k]=v;}},setInterval:f=>s.tick=f,fetch:(url,options)=>{
+ s.ctx=vm.createContext({Date:Clock,console:{info(){},error(){}},localStorage:{getItem:k=>s.cache[k]||null,setItem:(k,v)=>{if(s.diskFail)throw Error('full');s.cache[k]=v;}},setInterval:(f,ms)=>{if(ms===5000)s.tick=f;else s.frame=f;},fetch:(url,options)=>{
  if(options&&options.method){s.draws.push(JSON.parse(options.body));return Promise.resolve({json:async()=>({result:'OK'})});}
  s.urls.push(url); if(s.bad)return Promise.reject(Error('offline'));
  const symbol=decodeURIComponent(url.split('/').pop().split('?')[0]);return Promise.resolve({json:async()=>payload(symbol)});
@@ -38,4 +38,43 @@ test('graph uses full height on right, with percentage at bottom left',async()=>
  run(s,'quotes.AAPL.fund=true; quotes.AAPL.points=[]');
  const fund=run(s,'front("AAPL",quotes.AAPL,Date.now())').trimEnd().split('\n').slice(8);
  assert.ok(fund.every(r=>!/[GR]/.test(r.slice(28))));
+});
+
+
+test('native reveal overlays chart only on symbol changes',async()=>{
+ const s=boot();await settle();
+ run(s,'quotes.AMZN=Object.assign({},quotes.AAPL,{symbol:"AMZN"})');
+ s.now+=10000;s.frame();await settle();
+ const page=s.draws.at(-1), mask=page.elements.find(e=>e.id==='reveal');
+ assert.equal(mask.path,'scripts/reveal.anim');assert.equal(mask.x,28);assert.equal(mask.loop,false);
+ assert.equal(page.elements[0].data,run(s,'front("AMZN",quotes.AMZN,Date.now())'));
+ const count=s.draws.length;s.now+=250;s.frame();await settle();assert.equal(s.draws.length,count);
+ s.now+=5000;s.frame();await settle();assert.ok(!s.draws.at(-1).elements.some(e=>e.id==='reveal'));
+ assert.ok(s.draws.at(-1).elements.every(e=>e.timeout===60));
+ run(s,'quotes.AMZN.fund=true; quotes.AMZN.points=[]');
+ assert.ok(!run(s,'elements(Date.now(),true)').some(e=>e.id==='reveal'));
+});
+
+test('slow quote fetch does not stop rotation or queue concurrent display writes',async()=>{
+ const s=boot();await settle();
+ let finishDraw;
+ s.ctx.fetch=(url,options)=>{
+  if(options&&options.method){s.draws.push(JSON.parse(options.body));return new Promise(r=>finishDraw=r);}
+  return new Promise(()=>{});
+ };
+ s.now+=10000;s.tick();s.frame();const count=s.draws.length;
+ for(let i=0;i<20;i++){s.now+=120;s.frame();}
+ assert.equal(s.draws.length,count);
+ finishDraw({json:async()=>({result:'OK'})});await settle();
+ s.now+=10000;s.frame();assert.equal(s.draws.length,count+1);
+ assert.match(s.draws.at(-1).elements[1].text,/AMD/);
+});
+
+test('rejected display frames do not advance the reveal',async()=>{
+ const s=boot();await settle();
+ run(s,'sceneSymbol=null');
+ s.ctx.fetch=()=>Promise.resolve({json:async()=>({result:'ERROR'})});
+ s.frame();await settle();assert.equal(run(s,'sceneSymbol'),null);
+ s.ctx.fetch=()=>Promise.resolve({json:async()=>({result:'OK'})});
+ s.frame();await settle();assert.equal(run(s,'sceneSymbol'),'AAPL');
 });
