@@ -59,13 +59,13 @@ test('graph uses full height on right, with percentage at bottom left',async()=>
 });
 
 
-test('native reveal overlays chart only on symbol changes',async()=>{
+test('transitions preserve complete charts without the disabled native reveal',async()=>{
  const s=boot();await settle();
  s.frame();await settle();
  run(s,'quotes.AMZN=Object.assign({},quotes.AAPL,{symbol:"AMZN"})');
  s.now+=10000;s.frame();await settle();
- const page=s.draws.at(-1), mask=page.elements.find(e=>e.id==='reveal');
- assert.equal(mask.path,'scripts/reveal.anim');assert.equal(mask.x,28);assert.equal(mask.loop,false);
+ const page=s.draws.at(-1);
+ assert.ok(s.draws.every(p=>p.elements.every(e=>e.type!=='animation')));
  assert.equal(page.elements[0].data,run(s,'front("AMZN",quotes.AMZN,Date.now())'));
  const count=s.draws.length;s.now+=250;s.frame();await settle();assert.equal(s.draws.length,count);
  s.now+=5000;s.frame();await settle();assert.ok(!s.draws.at(-1).elements.some(e=>e.id==='reveal'));

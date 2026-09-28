@@ -11,6 +11,8 @@ const cacheTried = {};
 let sceneSymbol = null, lastDrawAt = 0;
 // Hold the last frame through slow requests; stopped apps still expire.
 const DISPLAY_TIMEOUT = 60;
+// Temporary firmware 1.2.4 mitigation; see the reboot investigation.
+const ENABLE_REVEAL = false;
 let currentIndex = 0, displayedAt = null;
 
 function number(n) { return typeof n === "number" && isFinite(n); }
@@ -127,7 +129,7 @@ function elements(now, reveal, index) {
     e.push(text("state",q?state(q,now):failed[symbol]?"Fetch failed; retrying":"Loading watchlist",34));
     e.push(text("stamp",q?"Quote UTC "+new Date(q.quoteTime).toISOString().slice(5,16).replace("T"," "):" ",50));
     e.push(text("range",q&&q.fund?"Daily NAV / prior close":"Start: prior close",66));
-    if(reveal && q && q.points.length>=2) e.push({id:"reveal",type:"animation",
+    if(ENABLE_REVEAL && reveal && q && q.points.length>=2) e.push({id:"reveal",type:"animation",
         path:"scripts/reveal.anim",x:28,y:0,z_index:1,align:"top_left",loop:false,timeout:2});
     return e;
 }
@@ -169,7 +171,7 @@ function refresh() {
     .then(function(){fetching=false;draw();});
 }
 preparePages();
-console.info("Stocks 0.3.4 started");
+console.info("Stocks 0.3.5 started");
 draw();refresh();
 setInterval(refresh,5000);
 setInterval(draw,250);

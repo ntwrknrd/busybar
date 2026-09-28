@@ -60,5 +60,8 @@ debug board.
 - [ ] Diagnose the reproduced firmware 1.2.4 reboot: internal intercom lost sync,
   supervisor error `0x4`, and Wi-Fi deinitialization. Trigger remains unknown;
   preserve `/ext/intercom_failure_log.txt` before the next failure.
-- [ ] Complete a full on-device refresh soak and real network-outage test.
+- [x] Capture the reboot over USB and compare rendering, fetching, and serialized
+  requests; see [investigation](plans/2026-09-28-stocks-reboot-investigation.md).
+- [ ] Validate the no-animation mitigation across longer runs and real network
+  outages; restore the reveal only after its interaction with firmware is understood.
 - [ ] Reassess JavaScript physical-input support before wheel navigation.

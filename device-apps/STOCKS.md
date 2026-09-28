@@ -8,8 +8,9 @@ The app uses the existing CLI's 31-symbol default watchlist, including indices
 and mutual funds. Each symbol stays visible for at least ten seconds in one
 stable layout: ticker at upper left,
 percentage change at bottom left, and an intraday sparkline using all 16 rows
-on the right. At each transition the graph draws from left to right while the
-ticker and percentage remain visible. The front has no separate price or
+on the right. Version 0.3.5 temporarily disables the graph-reveal animation
+while the firmware reboot is investigated; transitions still wait for a ready
+chart and replace the complete frame. The front has no separate price or
 market-status view; those
 details remain on the rear. Symbols without enough chart points show `NO CHART`,
 or `DAILY NAV` for mutual funds. Change is relative to the
@@ -18,7 +19,7 @@ prices, and ends at the quoted price used by the percentage. Its initial segment
 includes the overnight gap. No reference line is drawn. Prices use Yahoo's
 reported currency; quote timestamps on the rear screen are explicitly UTC.
 
-Requests run sequentially, at most one per five-second tick. The next symbol is
+Quote requests run sequentially, at most one per five-second tick. The next symbol is
 prefetched while the current chart is visible. Rotation waits until a valid
 quote for that next symbol is available; delayed or failed requests keep the
 current chart visible. Valid cached quotes can be shown with the stale color.
@@ -34,9 +35,9 @@ fetches retain the last valid quote. Stale prices and charts use yellow.
 extended-hours prices are not requested. During a regular session, quotes older
 than 20 minutes show `DELAYED`. These labels are independent of fetch freshness.
 Yahoo is an unofficial source and may throttle requests or change its schema.
-The display loop is independent of quote refresh. A reusable transparent animation
-reveals the live chart over about one second using the native player, avoiding
-slow per-frame HTTP requests. Completed frames are renewed every five seconds.
+The display loop is independent of quote refresh. The reusable native reveal
+asset is retained for isolated testing, but `ENABLE_REVEAL` is false by default
+as a temporary mitigation. Completed frames are renewed every five seconds.
 A 60-second frame lifetime tolerates short stalls without blanking the screen.
 This prototype supports daily charts only; wheel input remains deferred. The
 JavaScript heap is 256 KiB and chart samples are capped at 72.
@@ -90,7 +91,7 @@ No JavaScript out-of-memory error appeared in the saved report. The reboot
 remains unresolved; the graph/prefetch changes are not a claimed crash fix.
 
 Firmware logs are available through `/api/log_dump` and storage. Version 0.3.3
-logs its startup and underlying quote/display/cache error details. Preserve the
+introduced logging of its startup and underlying quote/display/cache error details. Preserve the
 intercom failure report before another failure overwrites it. Post-reboot menu
 screens are nonblank, so a nonblank-screen check alone cannot prove app health.
 
@@ -102,3 +103,11 @@ fix for the internal communication failure.
 A subsequent 0.3.3 check also found the device back at Start/Setup after a screen
 request timeout. The two-chart limit therefore did not eliminate the reported
 exit. The device was left at Start rather than repeatedly relaunched.
+
+Version 0.3.5 disables the reveal as a temporary mitigation. USB traces reproduced
+supervisor intercom error `0x4` with both the production and serialized-request
+builds. A no-animation control ran over nine minutes, rendered all 31 symbols,
+and returned to refreshed AAPL/AMZN pages without rebooting. This is a bounded
+hardware result, not proof of long-term stability. See the
+[reboot investigation](../plans/2026-09-28-stocks-reboot-investigation.md)
+for the control runs, related upstream issues, and further diagnostics.
