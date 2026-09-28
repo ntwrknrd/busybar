@@ -25,8 +25,9 @@ quote for that next symbol is available; delayed or failed requests keep the
 current chart visible. Valid cached quotes can be shown with the stale color.
 Each successful
 symbol becomes eligible for refresh after five minutes; failures retry after
-one minute when the scheduler retries that symbol. The first full
-watchlist load progresses over several minutes. Each quote is cached separately;
+one minute when the scheduler retries that symbol. Only the current and next symbols are fetched; other symbols wait until they
+approach display. Only those two charts stay parsed in JavaScript memory. Each
+quote is cached separately;
 restarts mark cached data stale until that symbol refreshes successfully. Failed
 fetches retain the last valid quote. Stale prices and charts use yellow.
 
@@ -89,7 +90,12 @@ it does not establish whether app traffic, firmware, or hardware triggered it.
 No JavaScript out-of-memory error appeared in the saved report. The reboot
 remains unresolved; the graph/prefetch changes are not a claimed crash fix.
 
-Firmware logs are available through `/api/log_dump` and storage. Version 0.3.2
+Firmware logs are available through `/api/log_dump` and storage. Version 0.3.3
 logs its startup and underlying quote/display/cache error details. Preserve the
 intercom failure report before another failure overwrites it. Post-reboot menu
 screens are nonblank, so a nonblank-screen check alone cannot prove app health.
+
+Version 0.3.3 limits parsed chart residency to the current and next pages and
+fetches only those symbols. All saved quotes remain available on storage.
+This reduces memory and network pressure; it is a mitigation, not a confirmed
+fix for the internal communication failure.

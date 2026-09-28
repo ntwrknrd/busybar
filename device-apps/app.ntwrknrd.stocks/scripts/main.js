@@ -6,7 +6,8 @@ const REFRESH_MS = 5 * 60 * 1000;
 const quotes = {};
 const due = {};
 const failed = {};
-let fetching = false, drawing = false, cursor = 0;
+let fetching = false, drawing = false;
+const cacheTried = {};
 let sceneSymbol = null, lastDrawAt = 0;
 // Hold the last frame through slow requests; stopped apps still expire.
 const DISPLAY_TIMEOUT = 60;
@@ -54,6 +55,24 @@ function percent(q) {const n=change(q); return (n>=0?"+":"")+n.toFixed(2)+"%";}
 function frontPercent(q) {
     const n=change(q), sign=n>=0?"+":"-", a=Math.abs(n);
     return sign+(a>999?"999":a>=100?a.toFixed(0):a>=10?a.toFixed(1):a.toFixed(2))+"%";
+}
+function preparePages() {
+    const current=SYMBOLS[currentIndex], next=SYMBOLS[(currentIndex+1)%SYMBOLS.length];
+    // Keep only two parsed charts in the JS heap. All others remain on storage.
+    Object.keys(quotes).forEach(function(symbol){
+        if(symbol!==current && symbol!==next) delete quotes[symbol];
+    });
+    Object.keys(cacheTried).forEach(function(symbol){
+        if(symbol!==current && symbol!==next) delete cacheTried[symbol];
+    });
+    [current,next].forEach(function(symbol){
+        if(quotes[symbol] || cacheTried[symbol])return;
+        cacheTried[symbol]=true;
+        try {
+            const q=JSON.parse(localStorage.getItem("quote-v1-"+symbol));
+            if(valid(q,symbol)){quotes[symbol]=q;failed[symbol]=!due[symbol] || failed[symbol];}
+        } catch(error){console.error("Cache unavailable: "+symbol+": "+String(error));}
+    });
 }
 function selection(now) {
     const next=(currentIndex+1)%SYMBOLS.length;
@@ -117,6 +136,7 @@ function elements(now, reveal, index) {
 }
 function draw() {
     if(drawing)return;
+    preparePages();
     const now=Date.now(), index=selection(now), symbol=SYMBOLS[index];
     const changed=symbol!==sceneSymbol;
     if(!changed && now-lastDrawAt<5000 && !(displayedAt===null && quotes[symbol]))return;
@@ -135,13 +155,11 @@ function draw() {
 function refresh() {
     if(fetching)return;
     const now=Date.now();
-    // Get the first page ready, then prefetch the next page before background work.
-    const wanted=SYMBOLS[quotes[SYMBOLS[currentIndex]]?(currentIndex+1)%SYMBOLS.length:currentIndex];
+    preparePages();
+    const current=SYMBOLS[currentIndex], next=SYMBOLS[(currentIndex+1)%SYMBOLS.length];
+    const wanted=quotes[current]?next:current;
     let symbol=!due[wanted]||now>=due[wanted]?wanted:null;
-    for(let i=0;!symbol && i<SYMBOLS.length;i++) {
-        const candidate=SYMBOLS[cursor];cursor=(cursor+1)%SYMBOLS.length;
-        if(!due[candidate]||now>=due[candidate]){symbol=candidate;break;}
-    }
+    if(!symbol && (!due[current]||now>=due[current]))symbol=current;
     if(!symbol)return;
     fetching=true;
     fetch("https://query2.finance.yahoo.com/v8/finance/chart/"+encodeURIComponent(symbol)+"?interval=5m&range=1d",
@@ -153,11 +171,8 @@ function refresh() {
     }).catch(function(error){failed[symbol]=true;due[symbol]=Date.now()+60000;console.error("Quote failed: "+symbol+": "+String(error));})
     .then(function(){fetching=false;draw();});
 }
-SYMBOLS.forEach(function(symbol){
-    try {const q=JSON.parse(localStorage.getItem("quote-v1-"+symbol));if(valid(q,symbol)){quotes[symbol]=q;failed[symbol]=true;}}
-    catch(_){console.error("Cache unavailable: "+symbol);}
-});
-console.info("Stocks 0.3.2 started");
+preparePages();
+console.info("Stocks 0.3.3 started");
 draw();refresh();
 setInterval(refresh,5000);
 setInterval(draw,250);
