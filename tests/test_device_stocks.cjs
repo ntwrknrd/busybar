@@ -1,0 +1,152 @@
+const {test}=require('node:test');
+const assert=require('node:assert/strict');
+const fs=require('node:fs'), vm=require('node:vm'), path=require('node:path');
+const root=path.join(__dirname,'../device-apps/app.ntwrknrd.stocks');
+const source=fs.readFileSync(root+'/scripts/main.js','utf8');
+const epoch=1800000000000;
+function payload(symbol='AAPL') {return {chart:{result:[{meta:{symbol,currency:'USD',regularMarketPrice:105,chartPreviousClose:100,regularMarketTime:epoch/1000,currentTradingPeriod:{regular:{start:epoch/1000-3600,end:epoch/1000+3600}},instrumentType:'EQUITY'},timestamp:[1,2,3],indicators:{quote:[{close:[100,null,105]}]}}]}};}
+function boot(cache={},bad=false) {
+ const s={now:epoch,cache:{...cache},draws:[],urls:[],bad};
+ class Clock extends Date {static now(){return s.now;}}
+ s.ctx=vm.createContext({Date:Clock,console:{info(){},error(){}},localStorage:{getItem:k=>s.cache[k]||null,setItem:(k,v)=>{if(s.diskFail)throw Error('full');s.cache[k]=v;}},setInterval:(f,ms)=>{if(ms===5000)s.tick=f;else s.frame=f;},fetch:(url,options)=>{
+ if(options&&options.method){s.draws.push(JSON.parse(options.body));return Promise.resolve({json:async()=>({result:'OK'})});}
+ s.urls.push(url); if(s.bad)return Promise.reject(Error('offline'));
+ const symbol=decodeURIComponent(url.split('/').pop().split('?')[0]);return Promise.resolve({json:async()=>payload(symbol)});
+ }});vm.runInContext(source,s.ctx);return s;
+}
+const settle=()=>new Promise(r=>setImmediate(r));
+const run=(s,code)=>vm.runInContext(code,s.ctx);
+test('manifest and original watchlist',async()=>{const s=boot();await settle();assert.equal(run(s,'SYMBOLS.length'),31);assert.equal(JSON.parse(fs.readFileSync(root+'/appmeta/manifest.json')).heap_size_kib,256);assert.ok(fs.statSync(root+'/appmeta/manifest.json').size<=512);});
+test('direct HTTPS fetch, cache and complete bitmap rendering',async()=>{const s=boot();await settle();assert.match(s.urls[0],/^https:\/\/query2/);const q=JSON.parse(s.cache['quote-v1-AAPL']);assert.equal(q.price,105);assert.deepEqual(q.points,[100,105]);assert.equal(run(s,'state(quotes.AAPL,Date.now())'),'OPEN');const bmp=s.draws.at(-1).elements[0].data.split('\n');assert.equal(bmp[1],'72 16 6 1');assert.ok(bmp.slice(8,24).every(l=>l.length===72));});
+test('prefetches next symbol and holds the current page until it is ready',async()=>{
+ const s=boot();await settle();s.frame();await settle();
+ const a=run(s,'front("AAPL",quotes.AAPL,Date.now())');
+ s.now+=10000;assert.equal(run(s,'selection(Date.now())'),0);
+ assert.equal(run(s,'front("AAPL",quotes.AAPL,Date.now())'),a);
+ s.tick();await settle();assert.match(s.urls.at(-1),/AMZN/);
+ s.frame();await settle();assert.equal(run(s,'currentIndex'),1);
+ s.now+=9999;assert.equal(run(s,'selection(Date.now())'),1);
+});
+test('closed, delayed, stale and fund states differ',async()=>{const s=boot();await settle();assert.equal(run(s,'state(quotes.AAPL,quotes.AAPL.close)'), 'STALE');run(s,'quotes.AAPL.fetchedAt=quotes.AAPL.close');assert.equal(run(s,'state(quotes.AAPL,quotes.AAPL.close)'),'CLOSED');run(s,'quotes.AAPL.fetchedAt=Date.now(); quotes.AAPL.quoteTime=Date.now()-21*60000');assert.equal(run(s,'state(quotes.AAPL,Date.now())'),'DELAYED');run(s,'quotes.AAPL.fund=true');assert.equal(run(s,'state(quotes.AAPL,Date.now())'),'DAILY NAV');});
+test('fund NAV may lack intraday chart, equities may not',async()=>{const s=boot();await settle();const p=payload();p.chart.result[0].meta.instrumentType='MUTUALFUND';delete p.chart.result[0].timestamp;p.chart.result[0].indicators.quote=[{}];s.ctx.body=p;assert.equal(run(s,'parse(body,"AAPL",Date.now()).points.length'),0);p.chart.result[0].meta.instrumentType='EQUITY';assert.throws(()=>run(s,'parse(body,"AAPL",Date.now())'));});
+test('invalid, wrong-symbol and future quotes are rejected',async()=>{const s=boot();await settle();for(const mutate of [p=>p.chart.result[0].meta.symbol='MSFT',p=>p.chart.result[0].meta.regularMarketPrice=null,p=>p.chart.result[0].meta.regularMarketTime=epoch/1000+400,p=>p.chart.result[0].meta.chartPreviousClose=0]){const p=payload();mutate(p);s.ctx.body=p;assert.throws(()=>run(s,'parse(body,"AAPL",Date.now())'));}});
+test('restart uses marked cache; fetch failure preserves it and recovery clears stale',async()=>{const a=boot();await settle();const s=boot(a.cache,true);await settle();assert.equal(run(s,'state(quotes.AAPL,Date.now())'),'STALE');assert.equal(JSON.parse(s.cache['quote-v1-AAPL']).price,105);s.bad=false;s.now+=60000;run(s,'due.AAPL=0; due.AMZN=Date.now()+60000');s.tick();await settle();assert.equal(run(s,'state(quotes.AAPL,Date.now())'),'OPEN');});
+test('cache write failure retains quote; corrupted cache is ignored',async()=>{const s=boot({'quote-v1-MSFT':'bad'});s.diskFail=true;await settle();assert.equal(run(s,'quotes.AAPL.price'),105);assert.equal(run(s,'quotes.MSFT'),undefined);});
+test('bounds chart samples and renders a flat series',async()=>{const s=boot();await settle();const p=payload();p.chart.result[0].timestamp=Array.from({length:400},(_,i)=>i);p.chart.result[0].indicators.quote[0].close=Array(400).fill(105);s.ctx.body=p;assert.equal(run(s,'parse(body,"AAPL",Date.now()).points.length'),72);run(s,'quotes.AAPL=parse(body,"AAPL",Date.now())');assert.match(run(s,'front("AAPL",quotes.AAPL,Date.now()+5000)'),/G/);});
+test('only refreshes current and next pages, keeping the parsed cache bounded',async()=>{
+ const s=boot();await settle();s.frame();await settle();
+ s.now+=5000;s.tick();await settle();assert.equal(s.urls.length,2);
+ assert.ok(s.urls[1].includes('AMZN'));
+ s.tick();await settle();assert.equal(s.urls.length,2);
+ for(let i=0;i<35;i++){
+  s.now+=10000;s.frame();await settle();s.tick();await settle();s.frame();await settle();
+  assert.ok(run(s,'Object.keys(quotes).length')<=2);
+ }
+ assert.ok(Object.keys(s.cache).length>=31);
+});
+
+
+test('graph uses full height on right, with percentage at bottom left',async()=>{
+ const s=boot();await settle();
+ const rows=run(s,'front("AAPL",quotes.AAPL,Date.now())').trimEnd().split('\n').slice(8);
+ assert.ok(rows[0].slice(28).includes('G'));
+ assert.ok(rows[15].slice(28).includes('G'));
+ assert.ok(rows.slice(11).some(r=>r.slice(0,24).includes('G')));
+ assert.ok(rows.every(r=>r.slice(24,28)==='....'));
+ run(s,'quotes.AAPL.fund=true; quotes.AAPL.points=[]');
+ const fund=run(s,'front("AAPL",quotes.AAPL,Date.now())').trimEnd().split('\n').slice(8);
+ assert.ok(fund.every(r=>!/[GR]/.test(r.slice(28))));
+});
+
+
+test('transitions preserve complete charts without the disabled native reveal',async()=>{
+ const s=boot();await settle();
+ s.frame();await settle();
+ run(s,'quotes.AMZN=Object.assign({},quotes.AAPL,{symbol:"AMZN"})');
+ s.now+=10000;s.frame();await settle();
+ const page=s.draws.at(-1);
+ assert.ok(s.draws.every(p=>p.elements.every(e=>e.type!=='animation')));
+ assert.equal(page.elements[0].data,run(s,'front("AMZN",quotes.AMZN,Date.now())'));
+ const count=s.draws.length;s.now+=250;s.frame();await settle();assert.equal(s.draws.length,count);
+ s.now+=5000;s.frame();await settle();assert.ok(!s.draws.at(-1).elements.some(e=>e.id==='reveal'));
+ assert.ok(s.draws.at(-1).elements.every(e=>e.timeout===60));
+ run(s,'quotes.AMZN.fund=true; quotes.AMZN.points=[]');
+ assert.ok(!run(s,'elements(Date.now(),true)').some(e=>e.id==='reveal'));
+});
+
+test('slow quote fetch holds the current chart without concurrent display writes',async()=>{
+ const s=boot();await settle();
+ let finishDraw;
+ s.ctx.fetch=(url,options)=>{
+  if(options&&options.method){s.draws.push(JSON.parse(options.body));return new Promise(r=>finishDraw=r);}
+  return new Promise(()=>{});
+ };
+ s.now+=10000;s.tick();s.frame();const count=s.draws.length;
+ for(let i=0;i<20;i++){s.now+=120;s.frame();}
+ assert.equal(s.draws.length,count);
+ finishDraw({json:async()=>({result:'OK'})});await settle();
+ s.now+=10000;s.frame();assert.equal(s.draws.length,count+1);
+ assert.match(s.draws.at(-1).elements[1].text,/AAPL/);
+});
+
+test('rejected display frames do not advance the reveal',async()=>{
+ const s=boot();await settle();
+ run(s,'sceneSymbol=null');
+ s.ctx.fetch=()=>Promise.resolve({json:async()=>({result:'ERROR'})});
+ s.frame();await settle();assert.equal(run(s,'sceneSymbol'),null);
+ s.ctx.fetch=()=>Promise.resolve({json:async()=>({result:'OK'})});
+ s.frame();await settle();assert.equal(run(s,'sceneSymbol'),'AAPL');
+});
+
+
+test('rising intraday chart starts at previous close and ends lower for a daily loss',async()=>{
+ const s=boot();await settle();
+ run(s,'quotes.AAPL.points=[95,96,97]; quotes.AAPL.price=98; quotes.AAPL.previous=100');
+ const rows=run(s,'front("AAPL",quotes.AAPL,Date.now())').trimEnd().split('\n').slice(8);
+ assert.equal(run(s,'percent(quotes.AAPL)'),'-2.00%');
+ assert.equal(rows[0][28],'R');
+ assert.ok(rows.every(r=>!r.slice(28).includes('C')));
+ assert.equal(rows[6][71],'R');
+});
+
+test('chart starts at previous close for gains and handles unchanged prices',async()=>{
+ const s=boot();await settle();
+ run(s,'quotes.AAPL.points=[103,104]; quotes.AAPL.price=106; quotes.AAPL.previous=100');
+ const rows=run(s,'front("AAPL",quotes.AAPL,Date.now())').trimEnd().split('\n').slice(8);
+ assert.equal(rows[15][28],'G');
+ assert.ok(rows.every(r=>!r.slice(28).includes('C')));
+ assert.equal(rows[0][71],'G');
+ run(s,'quotes.AAPL.points=[100,100]; quotes.AAPL.price=100');
+ assert.ok(run(s,'front("AAPL",quotes.AAPL,Date.now())').split('\n')[16].slice(28).includes('G'));
+});
+
+
+test('failed next quote stays on current page and retries before advancing',async()=>{
+ const s=boot();await settle();s.frame();await settle();
+ s.bad=true;s.now+=10000;s.tick();await settle();s.frame();await settle();
+ assert.equal(run(s,'currentIndex'),0);assert.equal(run(s,'failed.AMZN'),true);
+ s.bad=false;s.now+=60000;s.tick();await settle();s.frame();await settle();
+ assert.equal(run(s,'currentIndex'),1);
+});
+
+test('next quote is prefetched during the current chart dwell',async()=>{
+ const s=boot();await settle();s.frame();await settle();
+ s.now+=5000;s.tick();await settle();
+ assert.match(s.urls.at(-1),/AMZN/);
+ assert.ok(run(s,'quotes.AMZN'));
+ assert.equal(run(s,'currentIndex'),0);
+ s.now+=5000;s.frame();await settle();assert.equal(run(s,'currentIndex'),1);
+});
+
+
+test('restart with a full persistent watchlist only loads two parsed charts',async()=>{
+ const seed=boot();await settle();const q=JSON.parse(seed.cache['quote-v1-AAPL']);
+ const symbols=run(seed,'SYMBOLS'),cache={};
+ for(const symbol of symbols)cache['quote-v1-'+symbol]=JSON.stringify({...q,symbol});
+ const s=boot(cache,true);await settle();
+ assert.equal(run(s,'Object.keys(quotes).length'),2);
+ s.frame();await settle();s.now+=10000;s.frame();await settle();s.frame();await settle();
+ assert.equal(run(s,'currentIndex'),1);
+ assert.deepEqual(Array.from(run(s,'Object.keys(quotes).sort()')),['AMD','AMZN']);
+ assert.equal(Object.keys(s.cache).length,31);
+});

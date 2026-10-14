@@ -1,0 +1,10 @@
+{
+  "format_version": 1,
+  "id": "app.ntwrknrd.stocks",
+  "name": "Stocks",
+  "version": "0.3.5",
+  "description": "Watchlist prices and intraday charts from Yahoo Finance",
+  "author": "ntwrknrd",
+  "heap_size_kib": 256,
+  "debug": false
+}
